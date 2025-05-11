@@ -1,0 +1,11 @@
+.venv_*
+sep_dataset/
+original_files/
+*.json
+*.csv
+*.tsv
+*.txt
+*.log
+*.pkl
+*.pickle
+*.parquet
