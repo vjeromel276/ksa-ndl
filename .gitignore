@@ -9,3 +9,5 @@ original_files/
 *.pkl
 *.pickle
 *.parquet
+__pycache__/
+*.pyc
