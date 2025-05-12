@@ -1,52 +1,41 @@
 # ksa-ndl
-# ksa-ndl
-
-## Development Workflow
-
-1. **Bootstrap ingest**  
-   ```bash
-   git checkout -b feature/bootstrap-full-history
-   # ... implement ingest_sharadar_day.py tests ...
-   pytest
-   git merge main
-
 
 Quant pipeline for 5-day return forecasting using Sharadar EOD data.
 
 ## Repo Structure
 
-- `sep_dataset/` — raw and master Parquet data for SEP, ACTIONS, TICKERS, METRICS  
-- `ingest_sharadar_day.py` — bootstrap + daily ingest script  
-- `compute_per_ticker.py` — builds and filters clean common-stock universe  
-- `completeness_check.py` / `export_missing.py` / `make_complete.py` — gap-filling tools  
-- `compute_per_ticker.py` — coverage & liquidity metrics  
-- `feature_engineering/` — (future) your factor calculators  
-- `models/` — (future) training and backtest code  
+- **sep_dataset/**  
+  Raw & master Parquet data for  
+  - SEP (prices)  
+  - ACTIONS (corporate events)  
+  - TICKERS (metadata)  
+  - METRICS (fundamentals)  
 
-## Branching & Commit Guidelines
+- **ingest_sharadar_day.py**  
+  Bootstrap + daily ingest script  
 
-- **Branch per feature**:  
-  - `feature/<short-descriptor>`  
-  - `fix/<short-descriptor>`  
-- **Commit convention**: 
+- **completeness_check.py**, **export_missing.py**, **filter_missing_common.py**, **make_complete.py**  
+  Gap-filling / backfill tools  
 
-- Merge back to `main` via PR once each feature is done and tested.
+- **compute_per_ticker.py**  
+  Per-ticker coverage & volume metrics → clean common-stock universe  
 
-## Getting Started
+- **feature_engineering/** *(future)*  
+  Factor calculators (momentum, volatility, liquidity, etc.)  
 
-1. `git clone … && cd ksa-ndl`  
-2. `pip install -r requirements.txt`  
-3. Set your API key:  
- ```bash
- export NASDAQ_API_KEY=your_key_here
+- **models/** *(future)*  
+  Training, backtesting, and forecasting code  
 
-## 
-## Getting Started
+## Development Workflow
 
-1. `git clone … && cd ksa-ndl`  
-2. `pip install -r requirements.txt`  
-3. Set your API key:  
- ```bash
- export NASDAQ_API_KEY=your_key_here
+Each of the six pipeline stages lives on its own feature branch.  
+After you finish and test a stage, open a PR, merge to `main`, then delete the branch.
 
-## 
+1. **Bootstrap ingest**  
+   ```bash
+   git checkout -b feature/bootstrap-full-history
+   # implement ingest_sharadar_day.py + tests
+   pytest
+   git checkout main
+   git merge --no-ff feature/bootstrap-full-history
+   git branch -d feature/bootstrap-full-history
