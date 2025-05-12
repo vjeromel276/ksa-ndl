@@ -40,3 +40,13 @@ Quant pipeline for 5-day return forecasting using Sharadar EOD data.
  ```bash
  export NASDAQ_API_KEY=your_key_here
 
+## 
+## Getting Started
+
+1. `git clone … && cd ksa-ndl`  
+2. `pip install -r requirements.txt`  
+3. Set your API key:  
+ ```bash
+ export NASDAQ_API_KEY=your_key_here
+
+## 
