@@ -1,46 +1,79 @@
 #!/usr/bin/env python3
 import os
 import json
+import argparse
 import pandas as pd
 import nasdaqdatalink
-from datetime import datetime
 
-# 1) Setup
-nasdaqdatalink.ApiConfig.api_key = os.environ["NASDAQ_API_KEY"]
-MASTER   = "sep_dataset/SHARADAR_SEP.parquet"
-SRC_TABLE = "SHARADAR/SEP"
+"""
+make_complete.py
 
-# 2) Load missing map
-with open("missing_pairs_common.json") as fp:
-    missing_map = json.load(fp)
+Backfill missing (ticker, date) rows into your SEP master Parquet
+by fetching from the Nasdaq Data Link API.
 
-# 3) Load master once
-df_master = pd.read_parquet(MASTER)
-df_master["date"] = pd.to_datetime(df_master["date"]).dt.date
+Usage:
+  python make_complete.py \
+    --master SEP_MASTER.parquet \
+    --missing missing_pairs.json
+"""
 
-# 4) Loop tickers & dates
-for ticker, dates in missing_map.items():
-    for dt_str in dates:
-        print(f"Fetching {ticker} @ {dt_str} ...", end=" ")
-        df_day = nasdaqdatalink.get_table(SRC_TABLE,
-                                          ticker=ticker,
-                                          date=dt_str,
-                                          paginate=True)
-        if df_day.empty:
-            print("no data")
-            continue
+def main(args=None):
+    p = argparse.ArgumentParser(description="Backfill missing SEP rows")
+    p.add_argument(
+        "--master",
+        help="Path to master SEP Parquet (overrides MASTER_PATH env var)",
+        default=None
+    )
+    p.add_argument(
+        "--missing",
+        help="Path to missing_pairs.json (overrides MISSING_JSON env var)",
+        default=None
+    )
+    opts = p.parse_args(args)
 
-        # normalize date
-        df_day["date"] = pd.to_datetime(df_day["date"]).dt.date
+    master_path = opts.master or os.environ.get("MASTER_PATH", "sep_dataset/SHARADAR_SEP.parquet")
+    missing_json = opts.missing or os.environ.get("MISSING_JSON", "missing_pairs.json")
 
-        # drop any existing stale rows for this ticker/date
-        mask = ~((df_master["ticker"]==ticker) & (df_master["date"]==df_day["date"].iloc[0]))
-        df_master = df_master[mask]
+    # Load missing map
+    with open(missing_json, "r") as fp:
+        missing_map = json.load(fp)
 
-        # append
-        df_master = pd.concat([df_master, df_day], ignore_index=True)
-        print(f"appended {len(df_day)} rows")
+    # Load or init master
+    df_master = pd.read_parquet(master_path)
+    df_master["date"] = pd.to_datetime(df_master["date"]).dt.date
 
-# 5) Write back full master
-df_master.to_parquet(MASTER, index=False)
-print("✅ All missing rows fetched & master SEP updated.")
+    # For each ticker/date, fetch and append if exists
+    appended = 0
+    for ticker, dates in missing_map.items():
+        for date_str in dates:
+            date_obj = pd.to_datetime(date_str).date()
+            print(f"Fetching {ticker} @ {date_str} ...", end=" ")
+            try:
+                df_new = nasdaqdatalink.get_table(
+                    "SHARADAR/SEP",
+                    ticker=ticker,
+                    date=date_str,
+                    paginate=True
+                )
+            except Exception:
+                df_new = pd.DataFrame()
+
+            if df_new.empty:
+                print("no data")
+                continue
+
+            # normalize date column
+            df_new["date"] = pd.to_datetime(df_new["date"]).dt.date
+            # drop any existing row for this ticker/date
+            df_master = df_master[~((df_master["ticker"] == ticker) & (df_master["date"] == date_obj))]
+            # append
+            df_master = pd.concat([df_master, df_new], ignore_index=True)
+            appended += len(df_new)
+            print(f"appended {len(df_new)} rows")
+
+    # Write back
+    df_master.to_parquet(master_path, index=False)
+    print(f"✅ All missing rows fetched & master SEP updated ({appended} rows appended).")
+
+if __name__ == "__main__":
+    main()
