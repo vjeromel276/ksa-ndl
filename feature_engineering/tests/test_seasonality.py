@@ -40,13 +40,27 @@ def test_dow_and_tom_and_month_dummies():
 
 def test_mom_12m():
     sep = make_sep()
-    # duplicate rows 252 days ago
+
+    # 1) Create the 252-day-ago block
     sep_prev = sep.copy()
     sep_prev['date'] = sep_prev['date'] - pd.Timedelta(days=252)
-    sep = pd.concat([sep_prev, sep], ignore_index=True).sort_values('date')
-    df = build(sep)
-    a = df.xs("A", level="ticker")
 
-    # On the last date, mom_12m = (19/9)-1 = 1.111...
-    val = a.iloc[-1]['mom_12m']
-    assert pytest.approx(val, rel=1e-6) == (19/9 - 1)
+    # 2) Concatenate & sort (this now has both sets)
+    all_sep = pd.concat([sep_prev, sep], ignore_index=True)
+    all_sep = all_sep.sort_values('date').reset_index(drop=True)
+
+    # 3) Build your factor frame
+    df = build(all_sep)
+    a  = df.xs("A", level="ticker")
+
+    # 4) Find the two prices from the **same** all_sep table
+    last_date = sep['date'].max()
+    prev_date = last_date - pd.Timedelta(days=252)
+
+    price_last = all_sep.loc[all_sep['date'] == last_date, 'close'].iat[0]
+    price_prev = all_sep.loc[all_sep['date'] == prev_date, 'close'].iat[0]
+
+    expected   = price_last / price_prev - 1
+    got        = a.loc[last_date, 'mom_12m']
+
+    assert pytest.approx(got, rel=1e-6) == expected
