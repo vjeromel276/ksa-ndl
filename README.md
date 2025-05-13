@@ -39,3 +39,4 @@ After you finish and test a stage, open a PR, merge to `main`, then delete the b
    git checkout main
    git merge --no-ff feature/bootstrap-full-history
    git branch -d feature/bootstrap-full-history
+2. **
