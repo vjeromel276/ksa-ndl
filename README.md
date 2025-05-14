@@ -1,42 +1,53 @@
 # ksa-ndl
 
-Quant pipeline for 5-day return forecasting using Sharadar EOD data.
+Quant pipeline for forecasting multi-day Sharadar EOD returns.
+
+---
 
 ## Repo Structure
 
+### Data ingestion & maintenance  
 - **sep_dataset/**  
-  Raw & master Parquet data for  
-  - SEP (prices)  
-  - ACTIONS (corporate events)  
-  - TICKERS (metadata)  
-  - METRICS (fundamentals)  
-
+  - `SHARADAR_SEP.parquet` — historical end-of-day price data  
+  - `SHARADAR_ACTIONS.parquet` — corporate actions (splits, dividends)  
+  - `SHARADAR_TICKERS.parquet` — ticker metadata  
+  - `SHARADAR_METRICS.parquet` — fundamental metrics  
 - **ingest_sharadar_day.py**  
-  Bootstrap + daily ingest script  
+  - Bootstrap full history & daily updates via NASDAQ API  
 
-- **completeness_check.py**, **export_missing.py**, **filter_missing_common.py**, **make_complete.py**  
-  Gap-filling / backfill tools  
+### Data quality & backfill  
+- **completeness_check.py** — check for missing ticker×date combinations  
+- **export_missing.py** — dump missing pairs to JSON  
+- **filter_missing_common.py** — filter for common-stock tickers  
+- **make_complete.py** — backfill missing dates by fetching data  
 
+### Universe construction  
 - **compute_per_ticker.py**  
-  Per-ticker coverage & volume metrics → clean common-stock universe  
+  - Calculates per-ticker trading-day coverage & average volume  
+  - Filters to a clean common-stock universe  
 
-- **feature_engineering/** *(future)*  
-  Factor calculators (momentum, volatility, liquidity, etc.)  
+### Feature engineering  
+- **feature_engineering/**  
+  - `factors/` — individual factor modules (momentum, volatility, liquidity, value, quality, seasonality, technicals, …)  
+  - `build.py` (or `__init__.py`) — orchestrator that maps raw SEP → feature matrix  
 
-- **models/** *(future)*  
-  Training, backtesting, and forecasting code  
+### Modeling & backtesting  
+- **models/**  
+  - `targets.py` — constructs forward-return & direction labels  
+  - `cv.py` — time-series cross-validation utilities  
+  - `train.py` — baseline training script (e.g. logistic/RF)  
+  - `backtest.py` — rolling backtest harness  
 
-## Development Workflow
+### Notebooks & docs  
+- **notebooks/** — exploratory analyses, model diagnostics  
+- **docs/** — design docs, data dictionaries, API spec  
 
-Each of the six pipeline stages lives on its own feature branch.  
-After you finish and test a stage, open a PR, merge to `main`, then delete the branch.
+---
 
-1. **Bootstrap ingest**  
+## Getting Started
+
+1. **Clone & install**  
    ```bash
-   git checkout -b feature/bootstrap-full-history
-   # implement ingest_sharadar_day.py + tests
-   pytest
-   git checkout main
-   git merge --no-ff feature/bootstrap-full-history
-   git branch -d feature/bootstrap-full-history
-2. **
+   git clone <repo_url> ksa-ndl
+   cd ksa-ndl
+   pip install -r requirements.txt
