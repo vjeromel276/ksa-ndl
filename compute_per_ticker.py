@@ -6,10 +6,13 @@ import argparse
 import pandas as pd
 import pandas_market_calendars as mcal
 
-def main(args=None):
-    # ── ARGPARSE ─────────────────────────────────────────────────────────────────
+# ── PARAMETERS ────────────────────────────────────────────────────────────────
+COVERAGE_THRESHOLD = 0.99     # require ≥99% trading‐day coverage
+VOLUME_THRESHOLD   = 100_000  # require ≥100k avg daily volume
+
+def main(argv=None):
     p = argparse.ArgumentParser(
-        description="Compute per-ticker coverage and volume metrics"
+        description="Compute per‐ticker coverage and volume metrics"
     )
     p.add_argument(
         "--sep-master",
@@ -26,13 +29,13 @@ def main(args=None):
     p.add_argument(
         "--cov-thresh",
         type=float,
-        default=0.99,
-        help="Coverage threshold (0.0-1.0)"
+        default=COVERAGE_THRESHOLD,
+        help="Coverage threshold (0.0–1.0)"
     )
     p.add_argument(
         "--vol-thresh",
         type=int,
-        default=100_000,
+        default=VOLUME_THRESHOLD,
         help="Volume threshold (int)"
     )
     p.add_argument(
@@ -53,77 +56,59 @@ def main(args=None):
         default="ticker_universe_clean.csv",
         help="Output CSV for the clean ticker universe"
     )
-    opts = p.parse_args(args or [])
+    opts = p.parse_args(argv or [])
 
-    SEP_MASTER       = opts.sep_master
-    TICKERS_META     = opts.meta_table
-    COVERAGE_THRESH  = opts.cov_thresh
-    VOLUME_THRESH    = opts.vol_thresh
-    OUT_COV          = opts.out_coverage
-    OUT_VOL          = opts.out_vol
-    OUT_UNIV         = opts.out_universe
-
-    # 1) Load master SEP and parse dates
-    df = pd.read_parquet(SEP_MASTER, columns=["ticker","date","volume"])
-    print(f"[INFO] Loaded {SEP_MASTER} ({df.shape[0]} rows)")
-    df["date"] = pd.to_datetime(df["date"]).dt.date
-    print(f"[INFO] Parsed date column ({df['date'].min()} to {df['date'].max()})")
-
-    # 2) Load ticker metadata for filtering
-    meta = pd.read_parquet(
-        TICKERS_META,
-        columns=["ticker","exchange","category"]
+    # 1) Load master SEP (only ticker, date, volume needed here)
+    df = pd.read_parquet(
+        opts.sep_master,
+        columns=["ticker", "date", "volume"]
     )
-    print(f"[INFO] Unique exchanges: {meta['exchange'].unique()}")
-    print(f"[INFO] Unique categories: {pd.unique(meta['category'])[:10]}")
+    print(f"[INFO] Loaded {opts.sep_master} ({df.shape[0]} rows)")
+    df["date"] = pd.to_datetime(df["date"]).dt.date
 
-    # 3) Filter to common-stock tickers
+    # 2) Load metadata for listing/delisting dates and filtering to common stock
+    meta = pd.read_parquet(
+        opts.meta_table,
+        columns=["ticker", "exchange", "category", "firstpricedate", "lastpricedate"]
+    )
+    # Filter to common‐stock only
     is_common = meta["category"].str.contains("Common Stock", case=False, na=False)
-    valid = meta.loc[is_common, "ticker"].unique()
-    print(f"[INFO] Common Stock tickers: {len(valid)} of {meta.shape[0]}")
-    if len(valid) == 0:
-        sys.exit("[ERROR] No Common Stock tickers found. Check your metadata filters.")
+    valid_tickers = meta.loc[is_common, "ticker"]
+    df = df[df["ticker"].isin(valid_tickers)]
+    print(f"[INFO] Restricted to {df['ticker'].nunique()} common‐stock tickers")
 
-    before = df.shape[0]
-    df = df[df["ticker"].isin(valid)]
-    after  = df.shape[0]
-    print(f"[INFO] Restricted SEP from {before}→{after} rows for common stocks")
-
-    # 4) Load price-date bounds
-    meta_dates = pd.read_parquet(
-        TICKERS_META,
-        columns=["ticker","firstpricedate","lastpricedate"]
-    ).rename(columns={
+    # Parse list/delist dates
+    meta = meta.rename(columns={
         "firstpricedate": "listed",
         "lastpricedate":  "delisted"
     })
-    meta_dates["listed"]   = pd.to_datetime(meta_dates["listed"],   errors="coerce").dt.date
-    meta_dates["delisted"] = pd.to_datetime(meta_dates["delisted"], errors="coerce").dt.date
+    meta["listed"]   = pd.to_datetime(meta["listed"],   errors="coerce").dt.date
+    meta["delisted"] = pd.to_datetime(meta["delisted"], errors="coerce").dt.date
 
-    # 5) Build NYSE calendar
-    nyse         = mcal.get_calendar("NYSE")
+    # 3) Build full NYSE calendar
     global_start = df["date"].min()
     global_end   = df["date"].max()
+    nyse         = mcal.get_calendar("NYSE")
     sched        = nyse.schedule(
         start_date=global_start.isoformat(),
         end_date=global_end.isoformat()
     )
     all_days     = sorted(sched.index.date)
 
-    # 6) Compute coverage per ticker
-    cov = []
+    # 4) Compute coverage per ticker
+    records = []
     for ticker, sub in df.groupby("ticker"):
-        row = meta_dates[meta_dates["ticker"] == ticker]
+        row = meta[meta["ticker"] == ticker]
         listed   = row["listed"].iat[0]   if not row.empty and pd.notna(row["listed"].iat[0]) else global_start
         delisted = row["delisted"].iat[0] if not row.empty and pd.notna(row["delisted"].iat[0]) else global_end
 
         win_start     = max(listed, global_start)
         win_end       = min(delisted, global_end)
         expected_days = [d for d in all_days if win_start <= d <= win_end]
-        have_days     = [d for d in sub["date"] if win_start <= d <= win_end]
-        coverage      = len(have_days) / len(expected_days) if expected_days else 0.0
+        have_days     = [d for d in sub["date"]    if win_start <= d <= win_end]
 
-        cov.append({
+        coverage = len(have_days) / len(expected_days) if expected_days else 0.0
+        records.append({
             "ticker":        ticker,
             "listed":        listed,
             "delisted":      delisted,
@@ -134,35 +119,31 @@ def main(args=None):
             "coverage":      coverage
         })
 
-    cov_df = pd.DataFrame(cov).sort_values("coverage", ascending=False)
+    cov_df = pd.DataFrame(records).sort_values("coverage", ascending=False)
+    cov_df.to_csv(opts.out_coverage, index=False)
+    print(f"[INFO] Wrote coverage metrics → {opts.out_coverage}")
 
-    # 7) Export coverage metrics
-    cov_df.to_csv(OUT_COV, index=False)
-    print(f"[INFO] Wrote {OUT_COV} ({len(cov_df)} rows)")
-
-    # 8) Compute & merge average volume
+    # 5) Average volume & merge
     avg_vol = df.groupby("ticker")["volume"].mean().reset_index(name="avg_volume")
     cov_vol = cov_df.merge(avg_vol, on="ticker", how="left")
-    cov_vol.to_csv(OUT_VOL, index=False)
-    print(f"[INFO] Wrote {OUT_VOL} ({len(cov_vol)} rows)")
+    cov_vol.to_csv(opts.out_vol, index=False)
+    print(f"[INFO] Wrote coverage+volume metrics → {opts.out_vol}")
 
-    # 9) Filter by coverage & volume thresholds
+    # 6) Apply universe filters
     clean = cov_vol[
-        (cov_vol["coverage"] >= COVERAGE_THRESH) &
-        (cov_vol["avg_volume"] >= VOLUME_THRESH)
-    ].copy()
-    clean.to_csv(OUT_UNIV, index=False)
-    print(f"[INFO] Wrote {OUT_UNIV} ({len(clean)} tickers)")
+        (cov_vol["coverage"] >= opts.cov_thresh) &
+        (cov_vol["avg_volume"] >= opts.vol_thresh)
+    ]
+    clean.to_csv(opts.out_universe, index=False)
+    print(f"[INFO] Wrote clean ticker universe → {opts.out_universe}")
 
-    # 10) Summary
-    print("\nFilter summary:")
-    print(f"  ≥{int(COVERAGE_THRESH*100)}% coverage:  {cov_vol[cov_vol.coverage>=COVERAGE_THRESH].shape[0]}")
-    print(f"  ≥{VOLUME_THRESH:,} avg volume: {cov_vol[cov_vol.avg_volume>=VOLUME_THRESH].shape[0]}")
-    print(f"  Both criteria: {len(clean)} tickers")
-    print(f"  Filtered out : {len(cov_vol) - len(clean)} tickers")
-    print(f"  Total tickers : {len(cov_vol)}")
-    print(f"  Clean coverage: {len(clean) / len(cov_vol):.2%}")
-    print(f"  Clean avg vol : {clean['avg_volume'].mean():,.0f}")
+    # 7) Summary
+    n_all   = len(cov_vol)
+    n_keep  = len(clean)
+    print("\n[SUMMARY]")
+    print(f"  ≥{int(opts.cov_thresh*100)}% coverage : {cov_vol[cov_vol.coverage>=opts.cov_thresh].shape[0]}/{n_all}")
+    print(f"  ≥{opts.vol_thresh:,} avg vol :    {cov_vol[cov_vol.avg_volume>=opts.vol_thresh].shape[0]}/{n_all}")
+    print(f"  Final universe : {n_keep}/{n_all} tickers")
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main()
