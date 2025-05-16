@@ -106,7 +106,7 @@ def main(argv=None):
 
     # 7) Compute coverage per ticker
     records = []
-    for ticker, sub in df.groupby("ticker"):
+    for ticker, sub in df.groupby("ticker", observed=False):
         row = meta[meta["ticker"] == ticker]
         listed   = (row["listed"].iat[0]
                     if not row.empty and pd.notna(row["listed"].iat[0])
@@ -137,7 +137,7 @@ def main(argv=None):
     print(f"[INFO] Wrote coverage metrics → {opts.out_coverage}")
 
     # 8) Compute & merge avg volume
-    avg_vol = df.groupby("ticker")["volume"].mean().reset_index(name="avg_volume")
+    avg_vol = df.groupby("ticker", observed=False)["volume"].mean().reset_index(name="avg_volume")
     cov_vol = cov_df.merge(avg_vol, on="ticker", how="left")
     cov_vol.to_csv(opts.out_vol, index=False)
     print(f"[INFO] Wrote coverage+volume metrics → {opts.out_vol}")

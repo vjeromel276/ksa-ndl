@@ -38,10 +38,11 @@ def build(sep: pd.DataFrame) -> pd.DataFrame:
 
     # Turn-of-Month: first & last 3 trading days per ticker+month
     ym = df['date'].dt.to_period('M').astype(str)
-    df['rank_fwd'] = df.groupby(['ticker', ym]).cumcount() + 1
+    df['rank_fwd'] = df.groupby(['ticker', ym], observed=False).cumcount() + 1
     rev = df.iloc[::-1].reset_index(drop=True)
     rev['rank_rev'] = rev.groupby(
-        ['ticker', rev['date'].dt.to_period('M').astype(str)]
+        ['ticker', rev['date'].dt.to_period('M').astype(str)], 
+        observed=False
     ).cumcount() + 1
     rank_rev = rev['rank_rev'].iloc[::-1].to_numpy()
     out['tom'] = ((df['rank_fwd'].to_numpy() <= 3) | (rank_rev <= 3)).astype(int)

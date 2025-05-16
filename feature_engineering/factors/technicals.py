@@ -15,7 +15,7 @@ def build(sep: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=idx)
 
     # Numeric rolling MAs
-    grouped = sep.groupby('ticker')['close']
+    grouped = sep.groupby('ticker', observed=False)['close']
     ma20_num = grouped.transform(lambda x: x.rolling(20).mean()).values
     ma50_num = grouped.transform(lambda x: x.rolling(50).mean()).values
 
@@ -42,7 +42,7 @@ def build(sep: pd.DataFrame) -> pd.DataFrame:
         return 100 - (100 / (1 + rs))
 
     # ------ RSI14 (object dtype) so `is np.nan` holds on missing slots ------
-    rsi_num = sep.groupby('ticker')['close'] \
+    rsi_num = sep.groupby('ticker', observed=False)['close'] \
                  .transform(lambda x: compute_rsi(x, 14)) \
                  .values
     # Build Python list with exact np.nan and floats
