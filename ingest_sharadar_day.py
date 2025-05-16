@@ -14,10 +14,9 @@ import pandas as pd
 import pandas_market_calendars as mcal
 import nasdaqdatalink
 from datetime import date as _date
+from core.schema import validate_full_sep, REQUIRED_FULL_COLUMNS  # ← bring in the full‐schema set
 
-from core.schema import validate_sep_df, REQUIRED_COLUMNS   # ← bring in the full‐schema set
-
-# Hard-coded directory where all Sharadar Parquet files live
+# Hard‐coded directory where all Sharadar Parquet files live
 SEP_DIR = "sep_dataset"
 
 
@@ -25,8 +24,11 @@ def fetch_via_api(table_name: str, date_str: str) -> pd.DataFrame:
     """Fallback to pull one day's data from the Nasdaq Data Link API."""
     print(f"[INFO] Fetching {table_name} for {date_str} via API...")
     try:
-        df = nasdaqdatalink.get_table(f"SHARADAR/{table_name}",
-                                      date=date_str, paginate=True)
+        df = nasdaqdatalink.get_table(
+            f"SHARADAR/{table_name}",
+            date=date_str,
+            paginate=True
+        )
     except Exception as e:
         print(f"[ERROR] API fetch failed: {e}")
         return pd.DataFrame()
@@ -35,12 +37,14 @@ def fetch_via_api(table_name: str, date_str: str) -> pd.DataFrame:
     return df
 
 
-def ingest_table(tgt_date: _date,
-                 table_name: str,
-                 src_parquet: str,
-                 master_parquet: str,
-                 date_col: str,
-                 key_cols: list):
+def ingest_table(
+    tgt_date: _date,
+    table_name: str,
+    src_parquet: str,
+    master_parquet: str,
+    date_col: str,
+    key_cols: list
+):
     src_path    = os.path.join(SEP_DIR, src_parquet)
     master_path = os.path.join(SEP_DIR, master_parquet)
 
@@ -74,9 +78,9 @@ def ingest_table(tgt_date: _date,
     if os.path.exists(master_path):
         df_master = pd.read_parquet(master_path)
 
-        # only validate SEP when it already *has* the full schema
-        if table_name.upper() == "SEP" and REQUIRED_COLUMNS.issubset(df_master.columns):
-            validate_sep_df(df_master)
+        # only validate when the master already has the full set of columns
+        if table_name.upper() == "SEP" and set(df_master.columns) >= REQUIRED_FULL_COLUMNS:
+            validate_full_sep(df_master)
 
         df_master[date_col] = pd.to_datetime(df_master[date_col]).dt.date
         # remove any stale rows for tgt_date
@@ -85,10 +89,11 @@ def ingest_table(tgt_date: _date,
     else:
         df_out = df_day
 
-    # Normalize lastupdated if present
+    # Normalize 'lastupdated' if present
     if "lastupdated" in df_out.columns:
-        df_out["lastupdated"] = pd.to_datetime(df_out["lastupdated"],
-                                               errors="coerce")
+        df_out["lastupdated"] = pd.to_datetime(
+            df_out["lastupdated"], errors="coerce"
+        )
 
     # --- 5) Write it back out ---
     df_out.to_parquet(master_path, index=False)
@@ -97,29 +102,29 @@ def ingest_table(tgt_date: _date,
 
 def main(argv=None):
     p = argparse.ArgumentParser(
-        description="Ingest one day's Sharadar SEP & ACTIONS.")
+        description="Ingest one day's Sharadar SEP & ACTIONS."
+    )
     p.add_argument("--date", required=True, help="YYYY-MM-DD")
     args = p.parse_args(argv)
 
-    # API key
+    # 1) Validate API key
     api_key = os.environ.get("NASDAQ_API_KEY")
     if not api_key:
         sys.exit("[ERROR] NASDAQ_API_KEY not set in environment")
     nasdaqdatalink.ApiConfig.api_key = api_key
 
-    # Target date
+    # 2) Parse & check target date
     try:
         tgt_date = pd.to_datetime(args.date).date()
     except Exception:
         sys.exit(f"[ERROR] Bad date: {args.date}")
 
-    # Ensure it's a trading day
     nyse  = mcal.get_calendar("NYSE")
     sched = nyse.schedule(start_date="1998-01-01", end_date=args.date)
     if tgt_date not in sched.index.date:
         sys.exit(f"[ERROR] {tgt_date} is not a NYSE trading day")
 
-    # Ingest SEP & ACTIONS
+    # 3) Ingest each table
     ingest_table(
         tgt_date,
         table_name="SEP",

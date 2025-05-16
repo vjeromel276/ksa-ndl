@@ -3,7 +3,7 @@ import pandas as pd
 from feature_engineering.factors.technicals import build as _build_technicals
 from feature_engineering.factors.seasonality import build as _build_seasonality
 from models.targets import make_targets
-from core.schema import validate_sep_df
+from core.schema import validate_min_sep
 
 def _coerce_sep_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -31,15 +31,17 @@ def load_features(sep: pd.DataFrame) -> pd.DataFrame:
     then compute technical + seasonality features indexed by ['ticker','date'].
     """
     df = sep.copy()
+    # cast to our core types + validate *minimal* SEP contract
     df = _coerce_sep_dtypes(df)
-    validate_sep_df(df)
+    validate_min_sep(df)
+
     # make sure there's a 'close' column for our factor builders
     if 'close' not in df.columns:
         if 'closeadj' in df.columns:
             df['close'] = df['closeadj']
         else:
             raise KeyError("load_features: SEP must have 'close' or 'closeadj'")
-    # build features
+
     tech = _build_technicals(df)
     seas = _build_seasonality(df)
     X = pd.concat([tech, seas], axis=1)
@@ -48,16 +50,19 @@ def load_features(sep: pd.DataFrame) -> pd.DataFrame:
 def load_targets(sep: pd.DataFrame) -> pd.DataFrame:
     """
     Given a raw SEP DataFrame, cast to correct dtypes, validate schema,
-    then compute forward-return & direction targets at 5 BDays ahead.
+    then compute forward-return & direction targets at exactly 5 BDays ahead.
     """
     df = sep.copy()
+    # cast to our core types + validate *minimal* SEP contract
     df = _coerce_sep_dtypes(df)
-    validate_sep_df(df)
+    validate_min_sep(df)
+
     # ensure make_targets sees a 'closeadj'
     if 'closeadj' not in df.columns:
         if 'close' in df.columns:
             df['closeadj'] = df['close']
         else:
             raise KeyError("load_targets: SEP must have 'closeadj' or 'close'")
+
     y = make_targets(df)
     return y

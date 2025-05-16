@@ -17,11 +17,10 @@ import argparse
 import numpy as np
 import pandas as pd
 
-from core.schema      import validate_sep_df
-from models.data      import load_features, load_targets
-from models.cv        import TimeSeriesSplitter
-from models.baseline  import train_baseline_classification, train_baseline_regression  # :contentReference[oaicite:1]{index=1}
-from models.metrics   import return_accuracy, regression_mse, regression_mae
+from core.schema          import validate_sep_df
+from models.data          import load_features, load_targets
+from models.cv            import TimeSeriesSplitter
+from models.baseline      import train_and_evaluate
 
 def main():
     p = argparse.ArgumentParser(description="Train & CV a baseline quant model")
@@ -59,45 +58,19 @@ def main():
     print(f"[INFO] Features: {X.shape}, Targets: {y.shape}")
 
     # 3) Setup time-series splitter
-    tss = TimeSeriesSplitter(
+    splitter = TimeSeriesSplitter(
         train_window=args.train_window,
         test_window=args.test_window,
         step=args.step
     )
 
-    scores = []
-    fold = 0
-    # We need a DataFrame to split on — use X (it has 'date' level) 
-    # so that train/test retains the same rows in both X and y.
-    X_df = X.reset_index()  # columns: ticker, date, ...
-    for train_idx, test_idx in tss.split(X_df, date_col="date"):
-        fold += 1
-        X_tr = X_df.iloc[train_idx].set_index(["ticker","date"])
-        X_te = X_df.iloc[test_idx].set_index(["ticker","date"])
-        y_tr = y.loc[X_tr.index]
-        y_te = y.loc[X_te.index]
+    # 4) Train & evaluate
+    scores = train_and_evaluate(X, y, splitter, mode=args.mode)
 
-        # 4) Train
-        if args.mode == "classify":
-            model = train_baseline_classification(X_tr, y_tr["dir_5d"])
-        else:
-            model = train_baseline_regression(X_tr, y_tr["return_5d"])
-
-        # 5) Predict & evaluate
-        preds = model.predict(X_te)
-        if args.mode == "classify":
-            score = return_accuracy(y_te["dir_5d"], preds)
-            metric_name = "Accuracy"
-        else:
-            score = regression_mae(y_te["return_5d"], preds)
-            metric_name = "MAE"
-
-        print(f"[Fold {fold}] {metric_name} = {score:.4f}")
-        scores.append(score)
-
-    # 6) Summary
+    # 5) Summary
+    metric_name = "Accuracy" if args.mode == "classify" else "MAE"
     mean_score = np.mean(scores) if scores else float("nan")
-    print(f"\nCV folds: {fold}, Mean {metric_name}: {mean_score:.4f}")
+    print(f"\nCV folds: {len(scores)}, Mean {metric_name}: {mean_score:.4f}")
 
 if __name__ == "__main__":
     main()

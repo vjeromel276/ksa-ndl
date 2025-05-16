@@ -6,6 +6,8 @@ import argparse
 import pandas as pd
 import pandas_market_calendars as mcal
 
+from core.schema import validate_volume_df
+
 # ── PARAMETERS ────────────────────────────────────────────────────────────────
 COVERAGE_THRESHOLD = 0.99     # require ≥99% trading‐day coverage
 VOLUME_THRESHOLD   = 100_000  # require ≥100k avg daily volume
@@ -58,26 +60,33 @@ def main(argv=None):
     )
     opts = p.parse_args(argv or [])
 
-    # 1) Load master SEP (only ticker, date, volume needed here)
-    df = pd.read_parquet(
-        opts.sep_master,
-        columns=["ticker", "date", "volume"]
-    )
-    print(f"[INFO] Loaded {opts.sep_master} ({df.shape[0]} rows)")
-    df["date"] = pd.to_datetime(df["date"]).dt.date
+    # 1) Load the full SEP table, then immediately slice to just (ticker, date, volume)
+    full_sep = pd.read_parquet(opts.sep_master)
+    df       = full_sep[["ticker", "date", "volume"]].copy()
 
-    # 2) Load metadata for listing/delisting dates and filtering to common stock
+    # ── COERCE to the exact dtypes our volume‐slice schema expects ────────────────
+    df["ticker"] = df["ticker"].astype("category")
+    df["date"]   = pd.to_datetime(df["date"])
+    df["volume"] = df["volume"].astype("float64")
+
+    # 2) Validate that slice
+    validate_volume_df(df)
+    print(f"[INFO] Loaded & validated (ticker, date, volume) slice: {opts.sep_master} ({df.shape[0]} rows)")
+
+    # 3) Now convert date→python date for calendar logic
+    df["date"] = df["date"].dt.date
+
+    # 4) Load metadata for listing/delisting dates and filtering to common‐stock
     meta = pd.read_parquet(
         opts.meta_table,
         columns=["ticker", "exchange", "category", "firstpricedate", "lastpricedate"]
     )
-    # Filter to common‐stock only
-    is_common = meta["category"].str.contains("Common Stock", case=False, na=False)
+    is_common     = meta["category"].str.contains("Common Stock", case=False, na=False)
     valid_tickers = meta.loc[is_common, "ticker"]
     df = df[df["ticker"].isin(valid_tickers)]
     print(f"[INFO] Restricted to {df['ticker'].nunique()} common‐stock tickers")
 
-    # Parse list/delist dates
+    # 5) Parse listing/delisting dates
     meta = meta.rename(columns={
         "firstpricedate": "listed",
         "lastpricedate":  "delisted"
@@ -85,7 +94,7 @@ def main(argv=None):
     meta["listed"]   = pd.to_datetime(meta["listed"],   errors="coerce").dt.date
     meta["delisted"] = pd.to_datetime(meta["delisted"], errors="coerce").dt.date
 
-    # 3) Build full NYSE calendar
+    # 6) Build full NYSE calendar over our SEP date range
     global_start = df["date"].min()
     global_end   = df["date"].max()
     nyse         = mcal.get_calendar("NYSE")
@@ -95,12 +104,16 @@ def main(argv=None):
     )
     all_days     = sorted(sched.index.date)
 
-    # 4) Compute coverage per ticker
+    # 7) Compute coverage per ticker
     records = []
     for ticker, sub in df.groupby("ticker"):
         row = meta[meta["ticker"] == ticker]
-        listed   = row["listed"].iat[0]   if not row.empty and pd.notna(row["listed"].iat[0]) else global_start
-        delisted = row["delisted"].iat[0] if not row.empty and pd.notna(row["delisted"].iat[0]) else global_end
+        listed   = (row["listed"].iat[0]
+                    if not row.empty and pd.notna(row["listed"].iat[0])
+                    else global_start)
+        delisted = (row["delisted"].iat[0]
+                    if not row.empty and pd.notna(row["delisted"].iat[0])
+                    else global_end)
 
         win_start     = max(listed, global_start)
         win_end       = min(delisted, global_end)
@@ -123,13 +136,13 @@ def main(argv=None):
     cov_df.to_csv(opts.out_coverage, index=False)
     print(f"[INFO] Wrote coverage metrics → {opts.out_coverage}")
 
-    # 5) Average volume & merge
+    # 8) Compute & merge avg volume
     avg_vol = df.groupby("ticker")["volume"].mean().reset_index(name="avg_volume")
     cov_vol = cov_df.merge(avg_vol, on="ticker", how="left")
     cov_vol.to_csv(opts.out_vol, index=False)
     print(f"[INFO] Wrote coverage+volume metrics → {opts.out_vol}")
 
-    # 6) Apply universe filters
+    # 9) Apply universe filters
     clean = cov_vol[
         (cov_vol["coverage"] >= opts.cov_thresh) &
         (cov_vol["avg_volume"] >= opts.vol_thresh)
@@ -137,7 +150,7 @@ def main(argv=None):
     clean.to_csv(opts.out_universe, index=False)
     print(f"[INFO] Wrote clean ticker universe → {opts.out_universe}")
 
-    # 7) Summary
+    # 10) Summary
     n_all   = len(cov_vol)
     n_keep  = len(clean)
     print("\n[SUMMARY]")
