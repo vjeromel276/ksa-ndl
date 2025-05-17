@@ -1,81 +1,77 @@
 #!/usr/bin/env python3
 # fetch_weekly.py
-# Script to download weekly slices of SHARADAR tables from Nasdaq Data Link in small batches,
-# handling rate limits (429) and saving CSVs or Parquets per week.
+# Script to download weekly slices of SHARADAR tables from Nasdaq Data Link,
+# handling rate limits, date filtering, and saving incremental CSVs per week.
 
 import argparse
 import os
 import time
-import nasdaqdatalink
 import pandas as pd
+import nasdaqdatalink
+from nasdaqdatalink import ApiConfig
 
 # Default SHARADAR dataset and tables
-DEFAULT_DATASET = "SHARADAR"
-DEFAULT_TABLES = ["ACTIONS", "INDICATORS", "METRICS", "SEP", "TICKERS", "CALENDAR"]
-
-# Sleep time between requests to avoid 429 errors
+default_tables = ["SEP", "ACTIONS", "INDICATORS", "METRICS", "TICKERS", "CALENDAR"]
+dataset = "SHARADAR"
+# Rate-limit pause to avoid 429s
 RATE_LIMIT_SLEEP = 2  # seconds
 
 
-def fetch_table(dataset: str, table: str, start_date: str, end_date: str, api_key: str, out_dir: str):
+def fetch_table(dataset: str, table: str, start_date: str, end_date: str, out_dir: str):
     """
-    Fetch a single SHARADAR table from Nasdaq Data Link for the given date range.
-    Saves output to out_dir/table_start_end.csv
+    Fetch rows for `table` in `dataset` between start_date and end_date (inclusive)
+    using datatable filters: date.gte & date.lte. Saves CSV to out_dir/table_start_end.csv
     """
     print(f"[INFO] Fetching {dataset}/{table} from {start_date} to {end_date}")
-    df = nasdaqdatalink.get(
-        f"{dataset}/{table}",
-        start_date=start_date,
-        end_date=end_date,
-        paginate=True,
-        api_key=api_key
-    )
+    try:
+        for table in default_tables:
+            # Fetch data from Nasdaq Data Link
+            df = nasdaqdatalink.get_table(
+                f"{dataset}/{table}",
+                date={'gte': start_date, 'lte': end_date},
+                paginate=True
+            )
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch {table}: {e}")
+
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"{table}_{start_date}_{end_date}.csv")
-    df.to_csv(out_path, index=False)
-    print(f"[INFO] Saved {table} to {out_path}")
+    filename = f"{table}_{start_date}_{end_date}.csv"
+    path = os.path.join(out_dir, filename)
+    df.to_csv(path, index=False)
+    print(f"[INFO] Saved {table} rows={len(df)} to {path}")
+
+    # backoff to respect rate limits
     time.sleep(RATE_LIMIT_SLEEP)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Fetch weekly SHARADAR tables via Nasdaq Data Link API"
+    p = argparse.ArgumentParser("Fetch weekly SHARADAR datatables via Nasdaq Data Link")
+    p.add_argument("--api-key", required=True, help="Your Nasdaq Data Link API key")
+    p.add_argument("--out-dir", required=True, help="Directory to save weekly CSVs")
+    p.add_argument("--start-date", required=True, help="Start date (YYYY-MM-DD) inclusive")
+    p.add_argument("--end-date", required=True, help="End date (YYYY-MM-DD) inclusive")
+    p.add_argument(
+        "--tables", nargs='+', default=default_tables,
+        help="List of SHARADAR tables to fetch (default: all)"
     )
-    parser.add_argument(
-        "--api-key", required=True,
-        help="Nasdaq Data Link API key"
-    )
-    parser.add_argument(
-        "--out-dir", required=True,
-        help="Directory to save downloaded CSVs"
-    )
-    parser.add_argument(
-        "--start-date", required=True,
-        help="Start date (YYYY-MM-DD) for first week"
-    )
-    parser.add_argument(
-        "--end-date", required=True,
-        help="End date (YYYY-MM-DD) exclusive of last week"
-    )
-    parser.add_argument(
-        "--tables", nargs='+', default=DEFAULT_TABLES,
-        help="List of SHARADAR tables to fetch"
-    )
-    args = parser.parse_args()
+    args = p.parse_args()
 
-    # Split into weekly intervals
-    week_starts = pd.date_range(start=args.start_date, end=args.end_date, freq='7D').strftime('%Y-%m-%d')
-    week_ends = week_starts[1:].tolist() + [args.end_date]
+    # configure client
+    ApiConfig.api_key = args.api_key
+    ApiConfig.use_retries = True
+    ApiConfig.number_of_retries = 5
+    ApiConfig.retry_backoff_factor = 0.5
+    ApiConfig.max_wait_between_retries = 8
+    ApiConfig.retry_status_codes = [429, 500, 502, 503, 504]
 
-    for start, end in zip(week_starts, week_ends):
-        for table in args.tables:
-            try:
-                fetch_table(DEFAULT_DATASET, table, start, end, args.api_key, args.out_dir)
-            except nasdaqdatalink.NasdaqDataLinkError as e:
-                print(f"[ERROR] {table} {start}->{end}: {e}")
-                print("Retrying after backoff...")
-                time.sleep(RATE_LIMIT_SLEEP * 3)
-                fetch_table(DEFAULT_DATASET, table, start, end, args.api_key, args.out_dir)
+    # iterate tables
+    for table in args.tables:
+        try:
+            fetch_table("SHARADAR", table, args.start_date, args.end_date, args.out_dir)
+        except Exception as exc:
+            print(f"[ERROR] {table}: {exc}\nRetrying after backoff...")
+            time.sleep(RATE_LIMIT_SLEEP * 3)
+            fetch_table("SHARADAR", table, args.start_date, args.end_date, args.out_dir)
 
 if __name__ == '__main__':
     main()
