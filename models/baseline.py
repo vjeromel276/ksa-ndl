@@ -1,63 +1,197 @@
-# models/baseline.py
+# baseline.py
+# Baseline training routines supporting dummy, XGBoost, and PyTorch backends.
+
 #!/usr/bin/env python3
+"""
+models/baseline.py
+
+Baseline training routines for classification and regression with dummy, XGBoost, and PyTorch backends.
+"""
+import logging
 import numpy as np
+import pandas as pd
+
 from sklearn.dummy import DummyClassifier, DummyRegressor
+from sklearn.preprocessing import LabelEncoder
+
+try:
+    import torch
+    from torch.utils.data import DataLoader, TensorDataset
+except ImportError:
+    # Torch will only be needed if using the torch backend
+    pass
 
 from models.metrics import return_accuracy, regression_mae
 
-def train_baseline_classification(X_train, y_train):
+logger = logging.getLogger(__name__)
+
+
+def train_baseline_classification(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    backend: str = "dummy",
+    device: str = "cpu",
+    num_classes: int = None,
+):
     """
-    A trivial “most-frequent” classifier.
+    Train a baseline classifier.
+
+    backends:
+      • dummy — sklearn DummyClassifier(strategy="most_frequent")
+      • xgb   — XGBoost XGBClassifier(tree_method="hist", device=("cuda"/None))
+      • torch — PyTorch MLP classifier
     """
-    model = DummyClassifier(strategy="most_frequent")
+    if backend == "dummy":
+        model = DummyClassifier(strategy="most_frequent")
+
+    elif backend == "xgb":
+        try:
+            from xgboost import XGBClassifier
+        except ImportError:
+            raise ImportError("Please install xgboost to use the xgb backend")
+        # Use 'hist' tree method; if using GPU, set device to 'cuda'
+        params = {"tree_method": "hist", "eval_metric": "logloss"}
+        if device == "gpu":
+            params["device"] = "cuda"
+        model = XGBClassifier(**params)
+
+    elif backend == "torch":
+        # Build PyTorch dataset
+        X_tensor = torch.from_numpy(X_train.values).float()
+        y_tensor = torch.from_numpy(y_train.values).long()
+        dataset = TensorDataset(X_tensor, y_tensor)
+        dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+
+        # Define MLP
+        input_dim = X_train.shape[1]
+        output_dim = num_classes or int(y_train.max()) + 1
+        model = torch.nn.Sequential(
+            torch.nn.Linear(input_dim, 64),
+            torch.nn.ReLU(),
+            torch.nn.Linear(64, output_dim)
+        )
+        torch_device = torch.device("cuda" if device == "gpu" else "cpu")
+        model = model.to(torch_device)
+
+        criterion = torch.nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+        # Training loop
+        model.train()
+        for epoch in range(5):
+            total_loss = 0.0
+            for xb, yb in dataloader:
+                xb, yb = xb.to(torch_device), yb.to(torch_device)
+                optimizer.zero_grad()
+                logits = model(xb)
+                loss = criterion(logits, yb)
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item() * xb.size(0)
+            avg_loss = total_loss / len(dataloader.dataset)
+            logger.debug("Epoch %d loss: %.4f", epoch, avg_loss)
+        return model
+
+    else:
+        raise ValueError(f"Unknown backend: {backend!r}")
+
+    # scikit-learn / XGBoost path
     model.fit(X_train, y_train)
     return model
 
-def train_baseline_regression(X_train, y_train):
+
+def train_baseline_regression(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    backend: str = "dummy",
+    device: str = "cpu"
+):
     """
-    A trivial “mean” regressor.
+    Train a baseline regressor.
+
+    backends:
+      • dummy — sklearn DummyRegressor(strategy="mean")
+      • xgb   — XGBoost XGBRegressor(tree_method="hist", device=("cuda"/None))
+      • torch — (not implemented)
     """
-    model = DummyRegressor(strategy="mean")
+    if backend == "dummy":
+        model = DummyRegressor(strategy="mean")
+
+    elif backend == "xgb":
+        try:
+            from xgboost import XGBRegressor
+        except ImportError:
+            raise ImportError("Please install xgboost to use the xgb backend")
+        params = {"tree_method": "hist"}
+        if device == "gpu":
+            params["device"] = "cuda"
+        model = XGBRegressor(**params)
+
+    elif backend == "torch":
+        raise NotImplementedError("PyTorch backend not implemented yet for regression")
+
+    else:
+        raise ValueError(f"Unknown backend: {backend!r}")
+
     model.fit(X_train, y_train)
     return model
 
-def train_and_evaluate(X, y, splitter, mode="classify"):
+
+def train_and_evaluate(
+    X: pd.DataFrame,
+    y: pd.Series,
+    splitter,
+    mode: str = "classify",
+    backend: str = "dummy",
+    device: str = "cpu"
+):
     """
     Run rolling time-series CV over (X, y), return one score per fold.
 
-    Parameters
-    ----------
-    X : DataFrame
-      Features, indexed by ['ticker','date'].
-    y : Series
-      Target (dir_5d or return_5d), indexed by ['ticker','date'].
-    splitter : TimeSeriesSplitter
-    mode : {"classify","regress"}
-      Which baseline+metric to use.
-
-    Returns
-    -------
-    List[float]
-      One accuracy (if classify) or MAE (if regress) per fold.
+    mode: "classify" → accuracy; "regress" → MAE
     """
-    # we need a flat DataFrame to split on the 'date' column
+    # 0) Ensure feature columns are numeric
+    try:
+        X = X.astype(np.float32)
+    except Exception as e:
+        logger.error("Feature dtype conversion error: %s", e)
+        raise
+
+    # 1) Encode classification labels once
+    num_classes = None
+    if mode == "classify":
+        le = LabelEncoder()
+        y_array = le.fit_transform(y.values)
+        logger.debug("LabelEncoder classes: %s", le.classes_)
+        logger.debug("Encoded y sample (first 20): %s", y_array[:20])
+        y = pd.Series(y_array, index=y.index)
+        num_classes = len(le.classes_)
+
     X_df = X.reset_index()
     scores = []
 
     for train_idx, test_idx in splitter.split(X_df, date_col="date"):
-        # re-index back to (ticker,date)
         X_tr = X_df.iloc[train_idx].set_index(["ticker","date"])
         X_te = X_df.iloc[test_idx].set_index(["ticker","date"])
         y_tr = y.loc[X_tr.index]
         y_te = y.loc[X_te.index]
 
         if mode == "classify":
-            clf = train_baseline_classification(X_tr, y_tr)
-            preds = clf.predict(X_te)
+            model = train_baseline_classification(
+                X_tr, y_tr,
+                backend=backend,
+                device=device,
+                num_classes=num_classes
+            )
+            preds = model.predict(X_te)
             score = return_accuracy(y_te, preds)
         else:
-            reg = train_baseline_regression(X_tr, y_tr)
-            preds = reg.predict(X_te)
+            model = train_baseline_regression(
+                X_tr, y_tr,
+                backend=backend,
+                device=device
+            )
+            preds = model.predict(X_te)
             score = regression_mae(y_te, preds)
 
         scores.append(score)
