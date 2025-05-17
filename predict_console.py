@@ -1,19 +1,25 @@
 # predict_console.py
-# Console application to generate 5-day direction and return predictions using trained models.
+# Console application to generate 5-day direction and return predictions using trained models, fully on GPU.
 
 #!/usr/bin/env python3
 import argparse
 import joblib
 import pandas as pd
 import numpy as np
+import logging
 
-from core.schema import validate_full_sep, _coerce_sep_dtypes
-from models.data import load_features
+from core.schema import validate_full_sep
+from models.data import load_features, _coerce_sep_dtypes
+import cupy as cp
+from xgboost import DMatrix
 
+# Configure logger
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s:%(name)s:%(message)s')
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Predict 5-day direction and return for a given ticker and date."
+        description="Predict 5-day direction and return for a given ticker and date on GPU."
     )
     parser.add_argument(
         "--sep-master", type=str, default="sep_dataset/SHARADAR_SEP.parquet",
@@ -55,33 +61,41 @@ def main():
         sep = _coerce_sep_dtypes(sep)
         validate_full_sep(sep)
 
-    # 2) Build features
-    X = load_features(sep)
-    # Align to 1D index
-    X = X.astype(np.float32)
+    # 2) Build features and cast to float32
+    X = load_features(sep).astype(np.float32)
 
-    # 3) Select single row for prediction
+    # 3) Select the single row for prediction
     idx = (args.ticker, pd.to_datetime(args.date))
     if idx not in X.index:
         raise KeyError(f"Features for {idx} not found.")
-    x_row = X.loc[[idx]]  # DataFrame shape (1, n_features)
+    x_row = X.loc[[idx]]
 
     # 4) Load models
     clf = joblib.load(args.classifier)
     reg = joblib.load(args.regressor)
 
-    # 5) Classification
-    proba = clf.predict_proba(x_row)[0]
-    p_up = float(proba[1])
+    # Prepare feature names
+    feature_names = x_row.columns.tolist()
+
+    # 5) GPU-based classification prediction
+    data_gpu = cp.asarray(x_row.values)
+    dmat = DMatrix(data_gpu, feature_names=feature_names)
+    logger.debug("Created DMatrix with feature names: %s", feature_names)
+    booster = clf.get_booster()
+    p_up = float(booster.predict(dmat)[0])
+    p_down = 1.0 - p_up
     direction = (
         "up" if p_up >= args.threshold else
-        ("down" if proba[0] >= args.threshold else "no_signal")
+        "down" if p_down >= args.threshold else
+        "no_signal"
     )
 
-    # 6) Regression
-    return_pred = float(reg.predict(x_row)[0])
+    # 6) GPU-based regression prediction
+    dmat_reg = DMatrix(cp.asarray(x_row.values), feature_names=feature_names)
+    logger.debug("Created Regression DMatrix with feature names: %s", feature_names)
+    return_pred = float(reg.get_booster().predict(dmat_reg)[0])
 
-    # 7) Output
+    # 7) Output results
     print(f"Ticker: {args.ticker}, Date: {args.date}")
     print(f"5d_dir: {direction}  (P(up)={p_up:.3f}, threshold={args.threshold})")
     print(f"5d_return: {return_pred:.6f}")
