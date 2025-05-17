@@ -5,6 +5,7 @@
 import argparse
 import joblib
 import pandas as pd
+import numpy as np
 
 from core.schema import validate_full_sep, _coerce_sep_dtypes
 from models.data import load_features
@@ -19,12 +20,16 @@ def main():
         help="Path to master SEP Parquet file"
     )
     parser.add_argument(
+        "--history-csv", type=str, default=None,
+        help="Optional path to CSV file with 252-day history for a single ticker"
+    )
+    parser.add_argument(
         "--classifier", type=str, required=True,
-        help="Path to saved classifier model (e.g., .joblib or .pkl)"
+        help="Path to saved classifier model (joblib)"
     )
     parser.add_argument(
         "--regressor", type=str, required=True,
-        help="Path to saved regression model"
+        help="Path to saved regression model (joblib)"
     )
     parser.add_argument(
         "--threshold", type=float, required=True,
@@ -40,40 +45,46 @@ def main():
     )
     args = parser.parse_args()
 
-    # 1) Load and validate SEP data
-    sep = pd.read_parquet(args.sep_master)
-    sep = _coerce_sep_dtypes(sep)
-    validate_full_sep(sep)
+    # 1) Load data (full SEP or history CSV)
+    if args.history_csv:
+        sep = pd.read_csv(args.history_csv, parse_dates=['date'])
+        sep = _coerce_sep_dtypes(sep)
+        validate_full_sep(sep)
+    else:
+        sep = pd.read_parquet(args.sep_master)
+        sep = _coerce_sep_dtypes(sep)
+        validate_full_sep(sep)
 
-    # 2) Build features for all (will select one)
+    # 2) Build features
     X = load_features(sep)
+    # Align to 1D index
+    X = X.astype(np.float32)
 
-    # 3) Select the single row for (ticker, date)
+    # 3) Select single row for prediction
     idx = (args.ticker, pd.to_datetime(args.date))
     if idx not in X.index:
-        raise KeyError(f"Features for {idx} not found in SEP data.")
-    x_input = X.loc[[idx]]  # DataFrame of shape (1, n_features)
+        raise KeyError(f"Features for {idx} not found.")
+    x_row = X.loc[[idx]]  # DataFrame shape (1, n_features)
 
     # 4) Load models
     clf = joblib.load(args.classifier)
     reg = joblib.load(args.regressor)
 
-    # 5) Classification: predict probability and threshold
-    proba = clf.predict_proba(x_input)[0]
+    # 5) Classification
+    proba = clf.predict_proba(x_row)[0]
     p_up = float(proba[1])
     direction = (
         "up" if p_up >= args.threshold else
         ("down" if proba[0] >= args.threshold else "no_signal")
     )
 
-    # 6) Regression: predict 5-day return
-    return_pred = float(reg.predict(x_input)[0])
+    # 6) Regression
+    return_pred = float(reg.predict(x_row)[0])
 
-    # 7) Output results
+    # 7) Output
     print(f"Ticker: {args.ticker}, Date: {args.date}")
     print(f"5d_dir: {direction}  (P(up)={p_up:.3f}, threshold={args.threshold})")
     print(f"5d_return: {return_pred:.6f}")
-
 
 if __name__ == "__main__":
     main()
