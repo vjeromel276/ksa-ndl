@@ -3,6 +3,8 @@
 # then save them to disk for later use.
 
 #!/usr/bin/env python3
+# Premise: Handle root cause of errors (NaNs, dtype issues) while preserving all valid data
+
 import argparse
 import joblib
 import pandas as pd
@@ -49,34 +51,35 @@ def main():
     validate_full_sep(sep)
     print(f"[INFO] Loaded SEP: {sep.shape[0]} rows")
 
-    # 2) Build features & targets
+    # 2) Build features
     X = load_features(sep)
+    # Convert all feature columns to numeric floats
     try:
         X = X.astype(np.float32)
     except Exception as e:
         raise ValueError(f"Error converting features to numeric: {e}")
-    y_df = load_targets(sep)
+    # Drop rows with NaNs in features (leading/trailing due to rolling windows)
+    initial_shape = X.shape
+    X = X.dropna()
+    print(f"[INFO] Dropped feature NaNs: {initial_shape} -> {X.shape}")
 
-    # Validate existence of target columns
+    # 3) Load and align targets
+    y_df = load_targets(sep)
     if args.target_col not in y_df.columns:
         raise ValueError(f"Unknown classification target: {args.target_col}")
     if 'return_5d' not in y_df.columns:
         raise ValueError("Return target 'return_5d' not found in targets")
 
-    # Align and drop NaNs in targets
-    y_class = y_df[args.target_col]
-    y_reg = y_df['return_5d']
-    # Reindex targets to features
-    y_class = y_class.reindex(X.index)
-    y_reg = y_reg.reindex(X.index)
-    # Keep only rows where both targets are present
+    y_class = y_df[args.target_col].reindex(X.index)
+    y_reg = y_df['return_5d'].reindex(X.index)
+    # Drop any rows where targets are NaN
     mask = y_class.notna() & y_reg.notna()
     X_clean = X.loc[mask]
     y_class_clean = y_class.loc[mask]
     y_reg_clean = y_reg.loc[mask]
-    print(f"[INFO] After dropping NaNs: Features: {X_clean.shape}, Classification: {y_class_clean.shape}, Regression: {y_reg_clean.shape}")
+    print(f"[INFO] After dropping target NaNs: Features: {X_clean.shape}, Classification: {y_class_clean.shape}, Regression: {y_reg_clean.shape}")
 
-    # 3) Train classifier on cleaned data
+    # 4) Train classifier
     print("[INFO] Training 5-day direction classifier...")
     clf = train_baseline_classification(
         X_clean, y_class_clean,
@@ -87,7 +90,7 @@ def main():
     joblib.dump(clf, args.clf_out)
     print(f"[INFO] Classifier saved to {args.clf_out}")
 
-    # 4) Train regressor on cleaned data
+    # 5) Train regressor
     print("[INFO] Training 5-day return regressor...")
     reg = train_baseline_regression(
         X_clean, y_reg_clean,
@@ -97,7 +100,6 @@ def main():
     joblib.dump(reg, args.reg_out)
     print(f"[INFO] Regressor saved to {args.reg_out}")
 
-    # 5) Done
     print("[INFO] Training and save complete.")
 
 
