@@ -22,7 +22,7 @@ def main():
         description="Predict 5-day direction and return for a given ticker and date on GPU."
     )
     parser.add_argument(
-        "--sep-master", type=str, default="sep_dataset/SHARADAR_SEP.parquet",
+        "--sep-master", type=str, default="sep_dataset/SHARADAR_SEP_common.parquet",
         help="Path to master SEP Parquet file"
     )
     parser.add_argument(
