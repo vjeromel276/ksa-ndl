@@ -11,3 +11,4 @@ original_files/
 *.parquet
 __pycache__/
 *.pyc
+models/
