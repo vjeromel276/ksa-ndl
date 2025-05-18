@@ -6,7 +6,10 @@ import requests
 import argparse
 import logging
 import os
-import merge_daily_download  # assumes merge_daily_download.py in same directory
+import sys
+import pandas as pd
+import pandas_market_calendars as mcal
+import merge_daily_download  # assumes merge_daily_download.py in the same directory
 
 # Tables to download and merge
 TABLES = ["SEP", "ACTIONS", "METRICS"]
@@ -34,6 +37,7 @@ def download_file(url: str, dest_path: str):
 
 def main():
     setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Download SHARADAR tables for a given date, with optional merge into Parquet"
     )
@@ -63,15 +67,22 @@ def main():
     )
     args = parser.parse_args()
 
-    date = args.date
+    date_str = args.date
+    # Check if trading day
+    nyse = mcal.get_calendar("NYSE")
+    schedule = nyse.schedule(start_date=date_str, end_date=date_str)
+    if schedule.empty:
+        logging.info(f"{date_str} is not a NYSE trading day; skipping download.")
+        sys.exit(0)
+
     os.makedirs(args.data_dir, exist_ok=True)
 
     # Download CSVs
     API_BASE = "https://data.nasdaq.com/api/v3/datatables/SHARADAR"
     API_KEY = "sMukN5Vun_5JyM7HzHr6"
     for table in TABLES:
-        url = f"{API_BASE}/{table}.csv?date={date}&api_key={API_KEY}"
-        output_file = os.path.join(args.data_dir, f"SHARADAR_{table}_{date}.csv")
+        url = f"{API_BASE}/{table}.csv?date={date_str}&api_key={API_KEY}"
+        output_file = os.path.join(args.data_dir, f"SHARADAR_{table}_{date_str}.csv")
         download_file(url, output_file)
 
     # Merge into Parquet snapshots if requested
@@ -85,10 +96,11 @@ def main():
                     master_dir=args.master_dir,
                     data_dir=args.data_dir,
                     output_dir=args.output_dir,
-                    date=date
+                    date=date_str
                 )
             except Exception as e:
-                logging.error(f"Failed to merge {table} for date {date}: {e}")
+                logging.error(f"Failed to merge {table} for date {date_str}: {e}")
+
 
 if __name__ == "__main__":
     main()
