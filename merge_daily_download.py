@@ -21,7 +21,7 @@ def merge_table(table: str, master_dir: str, data_dir: str, output_dir: str, dat
     """
     Merge a daily CSV into a date-stamped Parquet snapshot for the given table.
     """
-    master_path = os.path.join(master_dir, f"SHARADAR_{table}.parquet")
+    master_path = os.path.join(master_dir, f"SHARADAR_{table}_2.parquet")
     daily_csv = os.path.join(data_dir, f"SHARADAR_{table}_{date}.csv")
     output_path = os.path.join(output_dir, f"SHARADAR_{table}_{date}.parquet")
 
@@ -30,11 +30,13 @@ def merge_table(table: str, master_dir: str, data_dir: str, output_dir: str, dat
     logging.debug(f"Master {table} loaded: {len(master_df)} rows")
 
     logging.debug(f"Reading daily {table} CSV from {daily_csv}")
-    if table == "SEP":
-        daily_df = pd.read_csv(daily_csv, parse_dates=['date'])
-    else:
-        daily_df = pd.read_csv(daily_csv)
-    logging.debug(f"Daily {table} loaded: {len(daily_df)} rows")
+    cols = pd.read_csv(daily_csv, nrows=0).columns.tolist()
+    parse_dates = ['date'] if 'date' in cols else None
+    daily_df = pd.read_csv(daily_csv, parse_dates=parse_dates)
+    # enforce datetime dtype if present
+    if 'date' in daily_df.columns:
+        daily_df['date'] = pd.to_datetime(daily_df['date'], errors='coerce')
+    logging.debug(f"Daily {table} loaded: {len(daily_df)} rows, cols={daily_df.columns.tolist()}")
 
     logging.debug(f"Concatenating master and daily for {table}")
     combined = pd.concat([master_df, daily_df], ignore_index=True)
