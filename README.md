@@ -42,7 +42,7 @@ Quant pipeline for forecasting multi-day Sharadar EOD returns.
 - **notebooks/** — exploratory analyses, model diagnostics  
 - **docs/** — design docs, data dictionaries, API spec  
 
----
+### feature/advanced-features
 
 ## Getting Started
 
