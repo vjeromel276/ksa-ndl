@@ -96,7 +96,8 @@ def main():
                     master_dir=args.master_dir,
                     data_dir=args.data_dir,
                     output_dir=args.output_dir,
-                    date=date_str
+                    date=date_str,
+                    update_gold=False
                 )
             except Exception as e:
                 logging.error(f"Failed to merge {table} for date {date_str}: {e}")

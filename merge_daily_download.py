@@ -17,7 +17,7 @@ def setup_logging():
     )
 
 
-def merge_table(table: str, master_dir: str, data_dir: str, output_dir: str, date: str):
+def merge_table(table: str, master_dir: str, data_dir: str, output_dir: str, date: str, update_gold: bool):
     """
     Merge a daily CSV into a date-stamped Parquet snapshot for the given table.
     """
@@ -59,6 +59,12 @@ def merge_table(table: str, master_dir: str, data_dir: str, output_dir: str, dat
     combined.to_parquet(output_path, index=False)
     logging.info(f"Wrote merged {table} file: {output_path}")
 
+    # Overwrite gold master if requested
+    if update_gold:
+        logging.info(f"Overwriting gold master for {table} at {master_path}")
+        combined.to_parquet(master_path, index=False)
+        logging.info(f"Gold master updated: {master_path}")
+
 
 if __name__ == "__main__":
     setup_logging()
@@ -85,6 +91,11 @@ if __name__ == "__main__":
         default="sep_dataset",
         help="Directory to write the date-stamped Parquets"
     )
+    parser.add_argument(
+        "--update-gold",
+        action="store_true",
+        help="Also overwrite the master `_2.parquet` files with the merged data"
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -95,7 +106,8 @@ if __name__ == "__main__":
                 master_dir=args.master_dir,
                 data_dir=args.data_dir,
                 output_dir=args.output_dir,
-                date=args.date
+                date=args.date,
+                update_gold=args.update_gold
             )
         except Exception as e:
             logging.error(f"Failed to merge {table} for date {args.date}: {e}")
