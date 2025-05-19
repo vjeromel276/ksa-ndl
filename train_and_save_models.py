@@ -20,7 +20,7 @@ def main():
         description="Train and save 5-day direction classifier and return regressor."
     )
     parser.add_argument(
-        "--sep-master", type=str, default="sep_dataset/SHARADAR_SEP_common.parquet",
+        "--sep-master", type=str, default="sep_dataset/SHARADAR_SEP_common_v1.parquet",
         help="Path to master SEP Parquet file"
     )
     parser.add_argument(
