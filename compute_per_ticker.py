@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
 import os
-import sys
 import argparse
 
 import pandas as pd
 import pandas_market_calendars as mcal
-
 from core.schema import validate_volume_df
 
 # ── PARAMETERS ────────────────────────────────────────────────────────────────
 COVERAGE_THRESHOLD = 0.99     # require ≥99% trading‐day coverage
 VOLUME_THRESHOLD   = 100_000  # require ≥100k avg daily volume
 
-def main(argv=None):
+def main():
     p = argparse.ArgumentParser(
         description="Compute per‐ticker coverage and volume metrics"
     )
     p.add_argument(
-        "--sep-master",
+        "--common-sep",
         type=str,
-        default=os.environ.get("SEP_MASTER", "sep_dataset/SHARADAR_SEP.parquet"),
-        help="Path to master SEP dataset (prices)"
+        required=True,
+        help="Path to date-stamped SHARADAR_SEP_common_<date>.parquet"
     )
     p.add_argument(
         "--meta-table",
@@ -58,10 +56,10 @@ def main(argv=None):
         default="ticker_universe_clean.csv",
         help="Output CSV for the clean ticker universe"
     )
-    opts = p.parse_args(argv or [])
+    opts = p.parse_args()
 
-    # 1) Load the full SEP table, then immediately slice to just (ticker, date, volume)
-    full_sep = pd.read_parquet(opts.sep_master)
+    # 1) Load the date‐stamped common SEP dataset, slice to (ticker, date, volume)
+    full_sep = pd.read_parquet(opts.common_sep)
     df       = full_sep[["ticker", "date", "volume"]].copy()
 
     # ── COERCE to the exact dtypes our volume‐slice schema expects ────────────────
@@ -71,12 +69,12 @@ def main(argv=None):
 
     # 2) Validate that slice
     validate_volume_df(df)
-    print(f"[INFO] Loaded & validated (ticker, date, volume) slice: {opts.sep_master} ({df.shape[0]} rows)")
+    print(f"[INFO] Loaded & validated slice: {opts.common_sep} ({df.shape[0]} rows)")
 
-    # 3) Now convert date→python date for calendar logic
+    # 3) Convert date→python date for calendar logic
     df["date"] = df["date"].dt.date
 
-    # 4) Load metadata for listing/delisting dates and filtering to common‐stock
+    # 4) Load metadata for listing/delisting dates and filter to common‐stock tickers
     meta = pd.read_parquet(
         opts.meta_table,
         columns=["ticker", "exchange", "category", "firstpricedate", "lastpricedate"]
@@ -137,7 +135,8 @@ def main(argv=None):
     print(f"[INFO] Wrote coverage metrics → {opts.out_coverage}")
 
     # 8) Compute & merge avg volume
-    avg_vol = df.groupby("ticker", observed=False)["volume"].mean().reset_index(name="avg_volume")
+    avg_vol = df.groupby("ticker", observed=False)["volume"] \
+                .mean().reset_index(name="avg_volume")
     cov_vol = cov_df.merge(avg_vol, on="ticker", how="left")
     cov_vol.to_csv(opts.out_vol, index=False)
     print(f"[INFO] Wrote coverage+volume metrics → {opts.out_vol}")

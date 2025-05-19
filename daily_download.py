@@ -7,20 +7,15 @@ import argparse
 import logging
 import os
 import sys
-import pandas as pd
+
 import pandas_market_calendars as mcal
-import merge_daily_download  # assumes merge_daily_download.py in the same directory
-
-# Tables to download and merge
-TABLES = ["SEP", "ACTIONS", "METRICS"]
-
+import merge_daily_download  # assumes merge_daily_download.py is in the same dir
 
 def setup_logging():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s"
     )
-
 
 def download_file(url: str, dest_path: str):
     """
@@ -34,12 +29,10 @@ def download_file(url: str, dest_path: str):
                     f.write(chunk)
     logging.info(f'Download complete: {dest_path}')
 
-
 def main():
     setup_logging()
-
     parser = argparse.ArgumentParser(
-        description="Download SHARADAR tables for a given date, with optional merge into Parquet"
+        description="Download SHARADAR SEP for a given date, with optional merge into Parquet"
     )
     parser.add_argument(
         "date",
@@ -53,55 +46,50 @@ def main():
     parser.add_argument(
         "--merge",
         action="store_true",
-        help="Merge the downloaded tables into date-stamped Parquet snapshots"
+        help="Merge the downloaded SEP into a date-stamped Parquet snapshot"
     )
     parser.add_argument(
         "--master-dir",
         default="sep_dataset",
-        help="Directory where master Parquets live (for merge)"
+        help="Directory where master Parquet lives (for merge)"
     )
     parser.add_argument(
         "--output-dir",
         default="sep_dataset",
-        help="Directory to write the merged Parquets"
+        help="Directory to write the merged Parquet"
     )
     args = parser.parse_args()
 
     date_str = args.date
-    # Check if trading day
+
+    # 1) Check if it’s an NYSE trading day
     nyse = mcal.get_calendar("NYSE")
-    schedule = nyse.schedule(start_date=date_str, end_date=date_str)
-    if schedule.empty:
-        logging.info(f"{date_str} is not a NYSE trading day; skipping download.")
+    sched = nyse.schedule(start_date=date_str, end_date=date_str)
+    if sched.empty:
+        logging.info(f"{date_str} is not a trading day; skipping.")
         sys.exit(0)
 
     os.makedirs(args.data_dir, exist_ok=True)
 
-    # Download CSVs
+    # 2) Download SEP CSV
     API_BASE = "https://data.nasdaq.com/api/v3/datatables/SHARADAR"
-    API_KEY = "sMukN5Vun_5JyM7HzHr6"
-    for table in TABLES:
-        url = f"{API_BASE}/{table}.csv?date={date_str}&api_key={API_KEY}"
-        output_file = os.path.join(args.data_dir, f"SHARADAR_{table}_{date_str}.csv")
-        download_file(url, output_file)
+    API_KEY  = "sMukN5Vun_5JyM7HzHr6"
+    url = f"{API_BASE}/SEP.csv?date={date_str}&api_key={API_KEY}"
+    dest_csv = os.path.join(args.data_dir, f"SHARADAR_SEP_{date_str}.csv")
+    download_file(url, dest_csv)
 
-    # Merge into Parquet snapshots if requested
+    # 3) Merge into Parquet snapshot if requested
     if args.merge:
-        logging.info("Merging daily tables into Parquet snapshots")
+        logging.info("Merging SEP into Parquet snapshot")
         os.makedirs(args.output_dir, exist_ok=True)
-        for table in TABLES:
-            try:
-                merge_daily_download.merge_table(
-                    table=table,
-                    master_dir=args.master_dir,
-                    data_dir=args.data_dir,
-                    output_dir=args.output_dir,
-                    date=date_str,
-                    update_gold=False
-                )
-            except Exception as e:
-                logging.error(f"Failed to merge {table} for date {date_str}: {e}")
-
+        merge_daily_download.merge_table(
+            table="SEP",
+            master_dir=args.master_dir,
+            data_dir=args.data_dir,
+            output_dir=args.output_dir,
+            date=date_str,
+            update_gold=False
+        )
 
 if __name__ == "__main__":
     main()

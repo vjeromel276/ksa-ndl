@@ -83,6 +83,19 @@ def main():
         ],
         "build common-stock dataset"
     )
+    run_step(
+       [
+         "python3","compute_per_ticker.py",
+         "--common-sep",f"sep_dataset/SHARADAR_SEP_common_{proc_date}.parquet",
+         "--meta-table","sep_dataset/SHARADAR_TICKERS_2.parquet",
+         "--cov-thresh","0.99",
+         "--vol-thresh","100000",
+         "--out-coverage",f"sep_dataset/ticker_coverage_{proc_date}.csv",
+         "--out-vol",   f"sep_dataset/ticker_coverage_vol_{proc_date}.csv",
+         "--out-universe",f"sep_dataset/ticker_universe_clean_{proc_date}.csv"
+       ],
+       "compute coverage + volume → clean universe"
+   )
 
     logging.info(f"🎉 Pipeline complete for {proc_date}")
 

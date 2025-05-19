@@ -7,107 +7,85 @@ import logging
 import os
 import pandas as pd
 
-# Tables to process
-TABLES = ["SEP", "ACTIONS", "METRICS"]
-
 def setup_logging():
     logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s %(levelname)s %(message)s"
     )
 
-
-def merge_table(table: str, master_dir: str, data_dir: str, output_dir: str, date: str, update_gold: bool):
+def merge_table(table: str, master_dir: str, data_dir: str,
+                output_dir: str, date: str, update_gold: bool = False):
     """
-    Merge a daily CSV into a date-stamped Parquet snapshot for the given table.
+    Merge a daily SEP CSV into a date-stamped Parquet snapshot.
+    Optionally overwrite the gold master if update_gold is True.
     """
     master_path = os.path.join(master_dir, f"SHARADAR_{table}_2.parquet")
-    daily_csv = os.path.join(data_dir, f"SHARADAR_{table}_{date}.csv")
-    output_path = os.path.join(output_dir, f"SHARADAR_{table}_{date}.parquet")
+    daily_csv   = os.path.join(data_dir,   f"SHARADAR_{table}_{date}.csv")
+    snapshot    = os.path.join(output_dir, f"SHARADAR_{table}_{date}.parquet")
 
     logging.debug(f"Loading master {table} from {master_path}")
     master_df = pd.read_parquet(master_path)
-    logging.debug(f"Master {table} loaded: {len(master_df)} rows")
+    logging.debug(f"Master {table} rows: {len(master_df)}")
 
     logging.debug(f"Reading daily {table} CSV from {daily_csv}")
-    cols = pd.read_csv(daily_csv, nrows=0).columns.tolist()
-    parse_dates = ['date'] if 'date' in cols else None
-    daily_df = pd.read_csv(daily_csv, parse_dates=parse_dates)
-    # enforce datetime dtype if present
-    if 'date' in daily_df.columns:
-        daily_df['date'] = pd.to_datetime(daily_df['date'], errors='coerce')
-    logging.debug(f"Daily {table} loaded: {len(daily_df)} rows, cols={daily_df.columns.tolist()}")
+    daily_df = pd.read_csv(daily_csv, parse_dates=['date'])
+    logging.debug(f"Daily {table} rows: {len(daily_df)}")
 
-    logging.debug(f"Concatenating master and daily for {table}")
     combined = pd.concat([master_df, daily_df], ignore_index=True)
     logging.debug(f"After concat: {len(combined)} rows")
 
-    # Deduplicate combined DataFrame
-    if table == "SEP":
-        before = len(combined)
-        combined = combined.drop_duplicates(subset=['ticker', 'date'])
-        logging.debug(f"Dropped {before - len(combined)} duplicates on ['ticker','date']")
-    else:
-        before = len(combined)
-        combined = combined.drop_duplicates()
-        logging.debug(f"Dropped {before - len(combined)} full-row duplicates")
+    before = len(combined)
+    # For SEP: dedupe on ticker+date
+    combined = combined.drop_duplicates(subset=['ticker','date'])
+    logging.debug(f"Dropped {before - len(combined)} duplicates")
 
-    logging.debug(f"Sorting combined {table}")
-    combined = combined.sort_values(combined.columns.tolist())
+    # Ensure datetime dtype & sort
+    combined['date'] = pd.to_datetime(combined['date'], errors='coerce')
+    combined = combined.sort_values(['ticker','date'])
 
-    logging.debug(f"Writing merged {table} to {output_path}")
-    combined.to_parquet(output_path, index=False)
-    logging.info(f"Wrote merged {table} file: {output_path}")
+    logging.debug(f"Writing snapshot to {snapshot}")
+    combined.to_parquet(snapshot, index=False)
+    logging.info(f"Wrote snapshot: {snapshot}")
 
-    # Overwrite gold master if requested
     if update_gold:
-        logging.info(f"Overwriting gold master for {table} at {master_path}")
+        logging.info(f"Overwriting gold master at {master_path}")
         combined.to_parquet(master_path, index=False)
         logging.info(f"Gold master updated: {master_path}")
 
-
 if __name__ == "__main__":
     setup_logging()
-
-    parser = argparse.ArgumentParser(
-        description="Merge daily SHARADAR tables into date-stamped Parquet snapshots"
+    p = argparse.ArgumentParser(
+        description="Merge daily SHARADAR SEP into date-stamped Parquet snapshot"
     )
-    parser.add_argument(
-        "date",
-        help="Date for daily data (YYYY-MM-DD)"
-    )
-    parser.add_argument(
+    p.add_argument("date", help="YYYY-MM-DD for daily data")
+    p.add_argument(
         "--master-dir",
         default="sep_dataset",
-        help="Directory where master Parquets live"
+        help="Directory of master '_2.parquet'"
     )
-    parser.add_argument(
+    p.add_argument(
         "--data-dir",
         default="data/sharadar_daily",
-        help="Directory where daily CSVs are stored"
+        help="Directory of daily CSVs"
     )
-    parser.add_argument(
+    p.add_argument(
         "--output-dir",
         default="sep_dataset",
-        help="Directory to write the date-stamped Parquets"
+        help="Where to write the dated Parquet"
     )
-    parser.add_argument(
+    p.add_argument(
         "--update-gold",
         action="store_true",
-        help="Also overwrite the master `_2.parquet` files with the merged data"
+        help="Also overwrite the gold master after merging"
     )
-    args = parser.parse_args()
+    args = p.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
-    for table in TABLES:
-        try:
-            merge_table(
-                table=table,
-                master_dir=args.master_dir,
-                data_dir=args.data_dir,
-                output_dir=args.output_dir,
-                date=args.date,
-                update_gold=args.update_gold
-            )
-        except Exception as e:
-            logging.error(f"Failed to merge {table} for date {args.date}: {e}")
+    merge_table(
+        table="SEP",
+        master_dir=args.master_dir,
+        data_dir=args.data_dir,
+        output_dir=args.output_dir,
+        date=args.date,
+        update_gold=args.update_gold
+    )
