@@ -52,5 +52,3 @@ Quant pipeline for forecasting multi-day Sharadar EOD returns.
    cd ksa-ndl
    pip install -r requirements.txt
 
-   ###
-   sd
