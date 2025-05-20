@@ -12,3 +12,4 @@ original_files/
 __pycache__/
 *.pyc
 *.joblib
+predictions/

@@ -1,6 +1,3 @@
-# predict_console.py
-# Console application to generate 5-day direction and return predictions using trained models, fully on GPU.
-
 #!/usr/bin/env python3
 import argparse
 import joblib
@@ -19,37 +16,38 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s:%(nam
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Predict 5-day direction and return for a given ticker and date on GPU."
+        description="Predict 5-day direction and return for a given ticker and date on GPU using date-stamped models."
     )
     parser.add_argument(
-        "--sep-master", type=str, default="sep_dataset/SHARADAR_SEP_common.parquet",
-        help="Path to master SEP Parquet file"
+        "--date", type=str, required=True,
+        help="As-of date for prediction (YYYY-MM-DD)"
     )
     parser.add_argument(
         "--history-csv", type=str, default=None,
         help="Optional path to CSV file with 252-day history for a single ticker"
     )
     parser.add_argument(
-        "--classifier", type=str, required=True,
-        help="Path to saved classifier model (joblib)"
+        "--classifier", type=str,
+        help="Path to saved classifier model (joblib). Overrides date-stamped default",
     )
     parser.add_argument(
-        "--regressor", type=str, required=True,
-        help="Path to saved regression model (joblib)"
+        "--regressor", type=str,
+        help="Path to saved regression model (joblib). Overrides date-stamped default",
     )
     parser.add_argument(
-        "--threshold", type=float, required=True,
+        "--threshold", type=float, default=0.95,
         help="Probability threshold for classifying direction (e.g., 0.95)"
     )
     parser.add_argument(
         "--ticker", type=str, required=True,
         help="Ticker symbol to predict for"
     )
-    parser.add_argument(
-        "--date", type=str, required=True,
-        help="As-of date for prediction (YYYY-MM-DD)"
-    )
     args = parser.parse_args()
+
+    # Build file paths based on date
+    sep_file = f"sep_dataset/SHARADAR_SEP_common_{args.date}.parquet"
+    clf_file = args.classifier or f"models/dir_5d_clf_{args.date}.joblib"
+    reg_file = args.regressor or f"models/return_5d_reg_{args.date}.joblib"
 
     # 1) Load data (full SEP or history CSV)
     if args.history_csv:
@@ -57,7 +55,7 @@ def main():
         sep = _coerce_sep_dtypes(sep)
         validate_full_sep(sep)
     else:
-        sep = pd.read_parquet(args.sep_master)
+        sep = pd.read_parquet(sep_file)
         sep = _coerce_sep_dtypes(sep)
         validate_full_sep(sep)
 
@@ -67,22 +65,20 @@ def main():
     # 3) Select the single row for prediction
     idx = (args.ticker, pd.to_datetime(args.date))
     if idx not in X.index:
-        raise KeyError(f"Features for {idx} not found.")
+        raise KeyError(f"Features for {idx} not found in {sep_file}.")
     x_row = X.loc[[idx]]
 
     # 4) Load models
-    clf = joblib.load(args.classifier)
-    reg = joblib.load(args.regressor)
+    clf = joblib.load(clf_file)
+    reg = joblib.load(reg_file)
 
-    # Prepare feature names
     feature_names = x_row.columns.tolist()
 
     # 5) GPU-based classification prediction
     data_gpu = cp.asarray(x_row.values)
     dmat = DMatrix(data_gpu, feature_names=feature_names)
     logger.debug("Created DMatrix with feature names: %s", feature_names)
-    booster = clf.get_booster()
-    p_up = float(booster.predict(dmat)[0])
+    p_up = float(clf.get_booster().predict(dmat)[0])
     p_down = 1.0 - p_up
     direction = (
         "up" if p_up >= args.threshold else
@@ -96,7 +92,7 @@ def main():
     return_pred = float(reg.get_booster().predict(dmat_reg)[0])
 
     # 7) Output results
-    print(f"Ticker: {args.ticker}, Date: {args.date}")
+    print(f"Date: {args.date}, Ticker: {args.ticker}")
     print(f"5d_dir: {direction}  (P(up)={p_up:.3f}, threshold={args.threshold})")
     print(f"5d_return: {return_pred:.6f}")
 
