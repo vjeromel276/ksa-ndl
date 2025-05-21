@@ -40,10 +40,10 @@ def parse_args():
         "--date", default=None,
         help="Date for naming outputs (YYYY-MM-DD). Inferred from --sep-master if omitted."
     )
-    parser.add_argument(
-        "--universe-csv", required=True,
-        help="Path to ticker_universe_clean_<date>.csv"
-    )
+    # parser.add_argument(
+    #     "--universe-csv", required=True,
+    #     help="Path to ticker_universe_clean_<date>.csv"
+    # )
     parser.add_argument(
         "--horizon", choices=["1d","5d","10d","30d"], default="5d",
         help="Prediction horizon"
@@ -93,16 +93,16 @@ def main():
     validate_full_sep(sep)
     logger.info(f"Loaded SEP: {sep.shape[0]} rows")
 
-    # Cherry-pick tickers for horizon
-    tickers = get_valid_tickers_for_horizon(
-        universe_csv=args.universe_csv,
-        horizon=args.horizon
-    )
-    if not tickers:
-        logger.error(f"No tickers meet criteria for horizon {args.horizon}")
-        sys.exit(1)
-    sep = sep[sep["ticker"].isin(tickers)]
-    logger.info(f"After cherry-pick: SEP shape = {sep.shape}")
+    # # Cherry-pick tickers for horizon
+    # tickers = get_valid_tickers_for_horizon(
+    #     universe_csv=args.universe_csv,
+    #     horizon=args.horizon
+    # )
+    # if not tickers:
+    #     logger.error(f"No tickers meet criteria for horizon {args.horizon}")
+    #     sys.exit(1)
+    # sep = sep[sep["ticker"].isin(tickers)]
+    # logger.info(f"After cherry-pick: SEP shape = {sep.shape}")
 
     # Feature engineering
     X = load_features(sep)

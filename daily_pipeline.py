@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# =======================
+# daily_pipeline.py
+# =======================
 import argparse
 import subprocess
 import sys
@@ -44,17 +47,33 @@ def filter_to_common_stock(raw_sep_path: str, meta_path: str, common_sep_path: s
     """
     # Load SEP snapshot
     sep = pd.read_parquet(raw_sep_path)
+
     # Load metadata with ticker and category
     meta = pd.read_parquet(meta_path, columns=["ticker", "category"])
-    # Select only common stock tickers
-    common_tickers = meta.loc[
-        meta["category"].str.contains("Common Stock", case=False, na=False),
-        "ticker"
-    ]
+
+    # Build a mask for *pure* common stock:
+    #  - must contain "Common Stock"
+    #  - must NOT contain ADR, Warrant, Primary, Secondary, ETF or REIT
+    contains_common = meta["category"].str.contains("Common Stock", case=False, na=False)
+    excludes = (
+        ~meta["category"].str.contains("ADR",       case=False, na=False) &
+        ~meta["category"].str.contains("Warrant",   case=False, na=False) &
+        ~meta["category"].str.contains("Primary",   case=False, na=False) &
+        ~meta["category"].str.contains("Secondary", case=False, na=False) &
+        ~meta["category"].str.contains("ETF",       case=False, na=False) &
+        ~meta["category"].str.contains("REIT",      case=False, na=False)
+    )
+    pure_common_mask = contains_common & excludes
+
+    common_tickers = meta.loc[pure_common_mask, "ticker"]
     sep_common = sep[sep["ticker"].isin(common_tickers)]
+
     # Write filtered SEP
     sep_common.to_parquet(common_sep_path)
-    logging.info(f"Filtered SEP to common stock: {len(sep_common)} rows")
+    logging.info(
+        f"Filtered to pure common stock ({len(common_tickers)} tickers): "
+        f"{len(sep_common)} rows written to {common_sep_path}"
+    )
 
 
 def parse_args():
@@ -115,6 +134,23 @@ def main():
     ], "Compute Coverage & Volume → Clean Universe")
 
     logging.info(f"🎉 Pipeline complete for {proc_date}")
+    logging.info(f"📊 Clean universe CSV: {universe_csv}")
+    # Step 4: Build & save the final “cherry” dataset for model training
+    logging.info("▶️  Filter SEP_common to cherry tickers for training")
+    # 4a) Load clean-universe tickers
+    clean_univ = pd.read_csv(universe_csv, usecols=["ticker"])
+    clean_set = set(clean_univ["ticker"])
+
+    # 4b) Load the SEP_common snapshot
+    sep_common_df = pd.read_parquet(common_sep)
+
+    # 4c) Filter down to only those clean tickers
+    cherry_df = sep_common_df[sep_common_df["ticker"].isin(clean_set)]
+
+    # 4d) Persist it for your model pipeline
+    cherry_path = f"sep_dataset/SHARADAR_SEP_cherry_common_{proc_date}.parquet"
+    cherry_df.to_parquet(cherry_path)
+    logging.info(f"✅  Saved cherry dataset: {len(cherry_df)} rows → {cherry_path}")
 
 
 if __name__ == "__main__":
