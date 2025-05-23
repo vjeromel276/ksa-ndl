@@ -53,6 +53,8 @@ def main():
 
     # 3) Filter to as-of-date
     as_of = pd.to_datetime(date)
+    X.to_parquet("debug_features_full.parquet")
+
     try:
         X_date = X.xs(as_of, level="date")
     except KeyError:
