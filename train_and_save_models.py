@@ -15,8 +15,8 @@ import pandas as pd
 import numpy as np
 
 from models.cherry_picker import get_valid_tickers_for_horizon
-from core.schema import validate_full_sep
-from models.data import load_features, load_targets, _coerce_sep_dtypes
+from core.schema import validate_full_sep, _coerce_sep_dtypes
+from models.data import load_features, load_targets
 from models.baseline import train_baseline_classification, train_baseline_regression
 
 # Logging configuration
@@ -34,16 +34,12 @@ def parse_args():
     )
     parser.add_argument(
         "--sep-master", required=True,
-        help="Path to master SEP Parquet (e.g., SHARADAR_SEP_common_YYYY-MM-DD.parquet)"
+        help="Path to filtered SEP Parquet (e.g., SHARADAR_SEP_common_YYYY-MM-DD.parquet)"
     )
     parser.add_argument(
         "--date", default=None,
         help="Date for naming outputs (YYYY-MM-DD). Inferred from --sep-master if omitted."
     )
-    # parser.add_argument(
-    #     "--universe-csv", required=True,
-    #     help="Path to ticker_universe_clean_<date>.csv"
-    # )
     parser.add_argument(
         "--horizon", choices=["1d","5d","10d","30d"], default="5d",
         help="Prediction horizon"
@@ -56,13 +52,14 @@ def parse_args():
         "--device", choices=["cpu","gpu"], default="gpu",
         help="Device for training"
     )
+    parser.add_argument(
+        "--universe-csv", required=True,
+        help="CSV of tickers (with have_days) for cherry-picking by horizon"
+    )
     return parser.parse_args()
 
 
 def infer_date_from_sep(path: str) -> str:
-    """
-    Extracts YYYY-MM-DD from a SEP filename.
-    """
     fname = os.path.basename(path)
     m = re.search(r"(\d{4}-\d{2}-\d{2})", fname)
     if not m:
@@ -75,7 +72,6 @@ def main():
 
     # Determine date string
     date_str = args.date or infer_date_from_sep(args.sep_master)
-    # Validate date format
     try:
         datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
@@ -83,31 +79,29 @@ def main():
         sys.exit(1)
     logger.info(f"Using date: {date_str}")
 
-    # Output filenames
+    # Output paths
     clf_out = f"models/dir_{args.horizon}_clf_{date_str}.joblib"
     reg_out = f"models/return_{args.horizon}_reg_{date_str}.joblib"
+    universe_out = f"models/universe_{args.horizon}_{date_str}.csv"
 
-    # Load and validate SEP
+    # Load & validate SEP
     sep = pd.read_parquet(args.sep_master)
     sep = _coerce_sep_dtypes(sep)
     validate_full_sep(sep)
     logger.info(f"Loaded SEP: {sep.shape[0]} rows")
 
-    # # Cherry-pick tickers for horizon
-    # tickers = get_valid_tickers_for_horizon(
-    #     universe_csv=args.universe_csv,
-    #     horizon=args.horizon
-    # )
-    # if not tickers:
-    #     logger.error(f"No tickers meet criteria for horizon {args.horizon}")
-    #     sys.exit(1)
-    # sep = sep[sep["ticker"].isin(tickers)]
-    # logger.info(f"After cherry-pick: SEP shape = {sep.shape}")
+    # Cherry-pick tickers and persist universe
+    valid_tickers = get_valid_tickers_for_horizon(
+        universe_csv=args.universe_csv,
+        horizon=args.horizon,
+        out_csv=universe_out
+    )
+    logger.info(f"Cherry-picked {len(valid_tickers)} tickers for {args.horizon}")
+    sep = sep[sep["ticker"].isin(valid_tickers)]
 
     # Feature engineering
-    X = load_features(sep)
+    X = load_features(sep).astype(np.float32)
     logger.info(f"Raw features shape: {X.shape}")
-    X = X.astype(np.float32)
     before = X.shape
     X = X.dropna()
     logger.info(f"Dropped NaNs: {before} -> {X.shape}")
@@ -150,6 +144,8 @@ def main():
     joblib.dump(reg, reg_out)
     logger.info(f"Regressor saved to {reg_out}")
 
+    # Final log
+    logger.info(f"Training universe saved to {universe_out}")
     logger.info("Training and save complete.")
 
 
