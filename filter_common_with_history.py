@@ -22,16 +22,18 @@ def setup_logging():
     )
 
 def get_valid_common_tickers(meta_df: pd.DataFrame) -> pd.Index:
-    """Whitelist genuine common-stock tickers."""
+    """Whitelist genuine common-stock tickers and exclude problematic symbols."""
     df = meta_df.drop_duplicates("ticker").copy()
     df["category"] = df["category"].astype(str)
+    df["ticker"] = df["ticker"].fillna("").astype(str)
     mask = (
         df["category"].str.contains("Common Stock", case=False, na=False)
-        & ~df["category"].str.contains("ADR|Warrant|ETF|REIT|Primary|Secondary", 
-                                        case=False, na=False)
+        & ~df["category"].str.contains("ADR|Warrant|ETF|REIT|Primary|Secondary",
+                                       case=False, na=False)
+        & ~df["ticker"].str.match(r".*[Q\d\.]$")
     )
     valid = df.loc[mask, "ticker"]
-    logging.info(f"Ticker whitelist: {len(valid):,} common stocks")
+    logging.info(f"Ticker whitelist: {len(valid):,} genuine common stocks")
     return valid
 
 def filter_price(sep: pd.DataFrame, price_thr: float) -> pd.DataFrame:

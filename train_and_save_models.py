@@ -14,7 +14,6 @@ import joblib
 import pandas as pd
 import numpy as np
 
-from models.cherry_picker import get_valid_tickers_for_horizon
 from core.schema import validate_full_sep
 from models.data import load_features, load_targets, _coerce_sep_dtypes
 from models.baseline import train_baseline_classification, train_baseline_regression
@@ -27,22 +26,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Train and save direction classifier and return regressor."
     )
     parser.add_argument(
         "--sep-master", required=True,
-        help="Path to master SEP Parquet (e.g., SHARADAR_SEP_common_YYYY-MM-DD.parquet)"
+        help="Path to master SEP Parquet (e.g., SHARADAR_SEP_fully_filtered_YYYY-MM-DD.parquet)"
     )
     parser.add_argument(
         "--date", default=None,
         help="Date for naming outputs (YYYY-MM-DD). Inferred from --sep-master if omitted."
-    )
-    parser.add_argument(
-        "--universe-csv", required=True,
-        help="Path to ticker_universe_clean_<date>.csv"
     )
     parser.add_argument(
         "--horizon", choices=["1d","5d","10d","30d"], default="5d",
@@ -58,7 +52,6 @@ def parse_args():
     )
     return parser.parse_args()
 
-
 def infer_date_from_sep(path: str) -> str:
     """
     Extracts YYYY-MM-DD from a SEP filename.
@@ -68,7 +61,6 @@ def infer_date_from_sep(path: str) -> str:
     if not m:
         raise ValueError(f"Could not infer date from SEP filename: {path}")
     return m.group(1)
-
 
 def main():
     args = parse_args()
@@ -91,18 +83,7 @@ def main():
     sep = pd.read_parquet(args.sep_master)
     sep = _coerce_sep_dtypes(sep)
     validate_full_sep(sep)
-    logger.info(f"Loaded SEP: {sep.shape[0]} rows")
-
-    # Cherry-pick tickers for horizon
-    tickers = get_valid_tickers_for_horizon(
-        universe_csv=args.universe_csv,
-        horizon=args.horizon
-    )
-    if not tickers:
-        logger.error(f"No tickers meet criteria for horizon {args.horizon}")
-        sys.exit(1)
-    sep = sep[sep["ticker"].isin(tickers)]
-    logger.info(f"After cherry-pick: SEP shape = {sep.shape}")
+    logger.info(f"Loaded SEP: {sep.shape[0]:,} rows, {sep['ticker'].nunique():,} tickers")
 
     # Feature engineering
     X = load_features(sep)
@@ -119,9 +100,11 @@ def main():
     if target_col not in y_df.columns or return_col not in y_df.columns:
         logger.error(f"Targets {target_col} or {return_col} missing in y_df")
         sys.exit(1)
+
     y_class = y_df[target_col].reindex(X.index)
     y_reg = y_df[return_col].reindex(X.index)
     mask = y_class.notna() & y_reg.notna()
+
     X_clean = X.loc[mask]
     y_class = y_class.loc[mask]
     y_reg = y_reg.loc[mask]
@@ -150,8 +133,7 @@ def main():
     joblib.dump(reg, reg_out)
     logger.info(f"Regressor saved to {reg_out}")
 
-    logger.info("Training and save complete.")
-
+    logger.info("🎉 Training and saving complete.")
 
 if __name__ == "__main__":
     main()
