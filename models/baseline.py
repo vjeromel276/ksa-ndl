@@ -1,11 +1,10 @@
-# baseline.py
-# Baseline training routines supporting dummy, XGBoost, and PyTorch backends.
-
 #!/usr/bin/env python3
 """
 models/baseline.py
 
-Baseline training routines for classification and regression with dummy, XGBoost, and PyTorch backends.
+Baseline training routines for classification and regression with dummy,
+XGBoost, and PyTorch backends — now with GPU‐optimized tree building
+and GPU predictor support.
 """
 import logging
 import numpy as np
@@ -18,10 +17,8 @@ try:
     import torch
     from torch.utils.data import DataLoader, TensorDataset
 except ImportError:
-    # Torch will only be needed if using the torch backend
+    # Torch only needed for the torch backend
     pass
-
-from models.metrics import return_accuracy, regression_mae
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +32,9 @@ def train_baseline_classification(
 ):
     """
     Train a baseline classifier.
-
     backends:
       • dummy — sklearn DummyClassifier(strategy="most_frequent")
-      • xgb   — XGBoost XGBClassifier(tree_method="hist", device=("cuda"/None))
+      • xgb   — XGBoost XGBClassifier(tree_method, predictor)
       • torch — PyTorch MLP classifier
     """
     if backend == "dummy":
@@ -49,20 +45,25 @@ def train_baseline_classification(
             from xgboost import XGBClassifier
         except ImportError:
             raise ImportError("Please install xgboost to use the xgb backend")
-        # Use 'hist' tree method; if using GPU, set device to 'cuda'
-        params = {"tree_method": "hist", "eval_metric": "logloss"}
+
+        # EASY MISTAKE 👉 forget to switch predictor to GPU
+        params = {
+            "tree_method": "gpu_hist" if device == "gpu" else "hist",
+            "eval_metric": "logloss"
+        }
         if device == "gpu":
-            params["device"] = "cuda"
+            # MUST match device string exactly
+            params["predictor"] = "gpu_predictor"
+
         model = XGBClassifier(**params)
 
     elif backend == "torch":
-        # Build PyTorch dataset
+        # (unchanged)
         X_tensor = torch.from_numpy(X_train.values).float()
         y_tensor = torch.from_numpy(y_train.values).long()
         dataset = TensorDataset(X_tensor, y_tensor)
         dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
 
-        # Define MLP
         input_dim = X_train.shape[1]
         output_dim = num_classes or int(y_train.max()) + 1
         model = torch.nn.Sequential(
@@ -76,7 +77,6 @@ def train_baseline_classification(
         criterion = torch.nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-        # Training loop
         model.train()
         for epoch in range(5):
             total_loss = 0.0
@@ -95,7 +95,7 @@ def train_baseline_classification(
     else:
         raise ValueError(f"Unknown backend: {backend!r}")
 
-    # scikit-learn / XGBoost path
+    # fit on CPU or GPU as configured
     model.fit(X_train, y_train)
     return model
 
@@ -108,11 +108,10 @@ def train_baseline_regression(
 ):
     """
     Train a baseline regressor.
-
     backends:
       • dummy — sklearn DummyRegressor(strategy="mean")
-      • xgb   — XGBoost XGBRegressor(tree_method="hist", device=("cuda"/None))
-      • torch — (not implemented)
+      • xgb   — XGBoost XGBRegressor(tree_method, predictor)
+      • torch — not implemented
     """
     if backend == "dummy":
         model = DummyRegressor(strategy="mean")
@@ -122,9 +121,14 @@ def train_baseline_regression(
             from xgboost import XGBRegressor
         except ImportError:
             raise ImportError("Please install xgboost to use the xgb backend")
-        params = {"tree_method": "hist"}
+
+        # EASY MISTAKE 👉 using cpu_hist by accident
+        params = {
+            "tree_method": "gpu_hist" if device == "gpu" else "hist",
+        }
         if device == "gpu":
-            params["device"] = "cuda"
+            params["predictor"] = "gpu_predictor"
+
         model = XGBRegressor(**params)
 
     elif backend == "torch":
