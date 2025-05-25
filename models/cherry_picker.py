@@ -1,10 +1,10 @@
 # models/cherry_picker.py
-# Utility for selecting tickers with sufficient trading-history for a given prediction horizon.
+# Utility for selecting tickers with sufficient trading‐history for a given prediction horizon.
 
 import pandas as pd
 from typing import List
 
-# —— Hard-coded mapping from prediction horizon to minimum history in trading days
+# — map from prediction horizon to minimum history in trading days
 _HORIZON_DAYS = {
     "1d":  52,
     "5d":  52 * 5,
@@ -31,11 +31,41 @@ def get_valid_tickers_for_horizon(
         raise ValueError(
             f"horizon must be one of {_HORIZON_DAYS.keys()}, got {horizon!r}"
         )
-
     min_days = _HORIZON_DAYS[horizon]
-    uni = pd.read_csv(
-        universe_csv,
-        parse_dates=["listed","delisted","win_start","win_end"]
-    )
-    valid = uni.loc[uni["have_days"] >= min_days, "ticker"].unique().tolist()
-    return valid
+
+    # 1) read in whatever CSV you point at
+    uni = pd.read_csv(universe_csv, dtype=str)
+
+    # 2) normalize all column‐names to snake_case lowercase
+    norm = {
+        col: col.strip()
+                .lower()
+                .replace(" ", "_")
+                .replace("-", "_")
+        for col in uni.columns
+    }
+    uni.rename(columns=norm, inplace=True)
+
+    # 3) locate your ticker column
+    if "ticker" not in uni.columns:
+        raise ValueError(
+            f"Could not find a 'ticker' column in {universe_csv!r}; "
+            f"found columns: {list(uni.columns)}"
+        )
+
+    # 4) locate your “days of history” column
+    if   "have_days"    in uni.columns:
+        days_col = "have_days"
+    elif "trading_days" in uni.columns:
+        days_col = "trading_days"
+    else:
+        raise ValueError(
+            f"Could not find a trading‐day count column in {universe_csv!r}; "
+            f"expected 'have_days' or 'trading_days', got {list(uni.columns)}"
+        )
+
+    # 5) filter and return
+    #    cast to numeric in case it was read as string
+    uni[days_col] = pd.to_numeric(uni[days_col], errors="coerce")
+    good = uni.loc[uni[days_col] >= min_days, "ticker"]
+    return good.dropna().unique().tolist()
