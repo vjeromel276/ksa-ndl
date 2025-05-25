@@ -56,12 +56,24 @@ def main():
     records = []
     for dt in usable_dates:
         X_dt = X.xs(dt, level="date")
-        # GPU DMatrix
-        gpu = cp.asarray(X_dt.values)
-        dmat = DMatrix(gpu, feature_names=X_dt.columns.tolist())
+        X_vals = X_dt.values  # NumPy array for sklearn fallbacks
 
-        probs = clf.get_booster().predict(dmat)
-        rets  = reg.get_booster().predict(dmat)
+        # classification probabilities
+        if hasattr(clf, "get_booster"):
+            gpu = cp.asarray(X_vals)
+            dmat = DMatrix(gpu, feature_names=X_dt.columns.tolist())
+            probs = clf.get_booster().predict(dmat)
+        else:
+            probs = clf.predict_proba(X_vals)[:, 1]
+
+        # regression predictions
+        if hasattr(reg, "get_booster"):
+            # reuse dmat if you like, else reconstruct:
+            gpu = cp.asarray(X_vals)
+            dmat = DMatrix(gpu, feature_names=X_dt.columns.tolist())
+            rets = reg.get_booster().predict(dmat)
+        else:
+            rets = reg.predict(X_vals)
 
         for i, ticker in enumerate(X_dt.index):
             rec = {

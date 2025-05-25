@@ -9,7 +9,7 @@ and GPU predictor support.
 import logging
 import numpy as np
 import pandas as pd
-
+from models.metrics import return_accuracy, regression_mae
 from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.preprocessing import LabelEncoder
 
@@ -46,14 +46,13 @@ def train_baseline_classification(
         except ImportError:
             raise ImportError("Please install xgboost to use the xgb backend")
 
-        # EASY MISTAKE 👉 forget to switch predictor to GPU
+        # Always use the fast 'hist' builder; on 2.x you switch GPU via device="cuda"
         params = {
-            "tree_method": "gpu_hist" if device == "gpu" else "hist",
-            "eval_metric": "logloss"
+            "tree_method": "hist",
+            "eval_metric": "logloss",
         }
         if device == "gpu":
-            # MUST match device string exactly
-            params["predictor"] = "gpu_predictor"
+            params["device"] = "cuda"
 
         model = XGBClassifier(**params)
 
@@ -95,10 +94,18 @@ def train_baseline_classification(
     else:
         raise ValueError(f"Unknown backend: {backend!r}")
 
-    # fit on CPU or GPU as configured
+    # — if we only have one class in this fold, XGB will choke on base_score=0 or 1,
+    #   so just fall back to a constant DummyClassifier here.
+    unique_y = np.unique(y_train)
+    if backend == "xgb" and len(unique_y) < 2:
+        # always predict whichever class we have
+        dummy = DummyClassifier(strategy="constant", constant=unique_y[0])
+        dummy.fit(X_train, y_train)
+        return dummy
+
+    # otherwise train normally
     model.fit(X_train, y_train)
     return model
-
 
 def train_baseline_regression(
     X_train: pd.DataFrame,
@@ -110,7 +117,7 @@ def train_baseline_regression(
     Train a baseline regressor.
     backends:
       • dummy — sklearn DummyRegressor(strategy="mean")
-      • xgb   — XGBoost XGBRegressor(tree_method, predictor)
+      • xgb   — XGBoost XGBRegressor(device, tree_method, objective)
       • torch — not implemented
     """
     if backend == "dummy":
@@ -122,24 +129,20 @@ def train_baseline_regression(
         except ImportError:
             raise ImportError("Please install xgboost to use the xgb backend")
 
-        # EASY MISTAKE 👉 using cpu_hist by accident
-        params = {
-            "tree_method": "gpu_hist" if device == "gpu" else "hist",
-        }
+        # Use CPU-hist always; GPU training via device="cuda" on 2.x
+        params = {"tree_method": "hist"}
         if device == "gpu":
-            params["predictor"] = "gpu_predictor"
+            params["device"] = "cuda"
 
         model = XGBRegressor(**params)
-
     elif backend == "torch":
-        raise NotImplementedError("PyTorch backend not implemented yet for regression")
-
+         raise NotImplementedError("PyTorch backend not implemented yet for regression")
+ 
     else:
-        raise ValueError(f"Unknown backend: {backend!r}")
-
+         raise ValueError(f"Unknown backend: {backend!r}")
+ 
     model.fit(X_train, y_train)
     return model
-
 
 def train_and_evaluate(
     X: pd.DataFrame,

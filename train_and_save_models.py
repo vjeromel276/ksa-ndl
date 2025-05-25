@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # train_and_save_models.py
 # Console script to train direction classifier and return regressor,
-# infers date for filenames like dir_<horizon>_clf_YYYY-MM-DD.joblib and return_<horizon>_reg_YYYY-MM-DD.joblib
+# now with GPU‐accelerated XGBoost when --device gpu is specified.
 
 import argparse
 import logging
@@ -48,7 +48,7 @@ def parse_args():
     )
     parser.add_argument(
         "--device", choices=["cpu","gpu"], default="gpu",
-        help="Device for training"
+        help="Device for training (only matters for xgb/torch backends)"
     )
     return parser.parse_args()
 
@@ -102,17 +102,17 @@ def main():
         sys.exit(1)
 
     y_class = y_df[target_col].reindex(X.index)
-    y_reg = y_df[return_col].reindex(X.index)
-    mask = y_class.notna() & y_reg.notna()
+    y_reg   = y_df[return_col].reindex(X.index)
+    mask    = y_class.notna() & y_reg.notna()
 
     X_clean = X.loc[mask]
     y_class = y_class.loc[mask]
-    y_reg = y_reg.loc[mask]
+    y_reg   = y_reg.loc[mask]
     logger.info(
         f"Clean data: Features={X_clean.shape}, Class targets={y_class.shape}, Reg targets={y_reg.shape}"
     )
 
-    # Train classifier
+    # Train classifier (will use GPU if --device gpu)
     logger.info("Training classifier...")
     clf = train_baseline_classification(
         X_clean, y_class,
@@ -123,7 +123,7 @@ def main():
     joblib.dump(clf, clf_out)
     logger.info(f"Classifier saved to {clf_out}")
 
-    # Train regressor
+    # Train regressor (will use GPU if --device gpu)
     logger.info("Training regressor...")
     reg = train_baseline_regression(
         X_clean, y_reg,
