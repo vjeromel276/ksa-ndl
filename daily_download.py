@@ -35,7 +35,8 @@ def main():
         description="Download SHARADAR SEP for a given date, with optional merge into Parquet"
     )
     parser.add_argument(
-        "date",
+        "--date",
+        required=True,
         help="Date to fetch (YYYY-MM-DD), e.g. 2025-05-12"
     )
     parser.add_argument(
