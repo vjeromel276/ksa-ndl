@@ -164,11 +164,32 @@ def main():
             X_tr, y_tr_ret,
             backend=args.backend, device=args.device
         )
+        # convert your sklearn wrappers into raw Boosters
+        # bst_clf = clf.get_booster()
+        # bst_reg = reg.get_booster()
+
+        # # push them onto the GPU
+        # for bst in (bst_clf, bst_reg):
+        #     bst.set_param({
+        #         "tree_method":   "hist",
+        #         "device":     "cuda",
+        #         "gpu_id":        0
+        #     })
+
+        # # now do your DMatrix→.predict exactly as you already have
+        # logger.info("→ clf   type: %s, methods: %s",
+        #     type(clf), sorted([m for m in dir(clf) if not m.startswith("_")]))
+        # logger.info("→ reg   type: %s, methods: %s",
+        #     type(reg), sorted([m for m in dir(reg) if not m.startswith("_")]))
 
         # ensure GPU predictor if desired
-        # if args.backend=="xgb" and args.device=="gpu":
-        #     for b in (clf.ge booster(), reg.get_booster()):
-        #         b.set_param({"predictor":"gpu_predictor"})
+        if args.backend=="xgb" and args.device=="gpu":
+            for b in (clf.get_booster(), reg.get_booster()):
+                # logger.debug(f"Setting booster {b} to use GPU predictor")
+                b.set_param({
+                    "tree_method":   "hist",
+                    "device":     "cuda"
+                })
 
         # 8) Predict p_up
         if args.backend=="xgb":
