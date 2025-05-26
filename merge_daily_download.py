@@ -44,7 +44,7 @@ def merge_table(table: str, master_dir: str, data_dir: str,
     combined = combined.sort_values(['ticker','date'])
 
     # ——— drop unused Sharadar columns early —————————————
-    unused = ["closeadj", "closeunadj", "lastupdated"]
+    unused = ["closeunadj", "lastupdated"]
     combined.drop(columns=unused, errors="ignore", inplace=True)
     logging.info("Dropped unused columns during merge: %s", unused)
 
