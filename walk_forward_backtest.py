@@ -7,6 +7,7 @@ Outputs detailed fold metrics + summary.
 """
 
 import argparse
+import json
 import logging
 import pandas as pd
 import numpy as np
@@ -59,11 +60,14 @@ def parse_args():
                    help="CSV path for per-fold metrics")
     p.add_argument("--out-summary",  default="wf_summary.csv",
                    help="CSV path for aggregated summary")
+    p.add_argument("--xgb-params",   type=str, default="{}",
+                   help="JSON dict of extra XGBoost params for both classifier & regressor")
     return p.parse_args()
 
 
 def main():
     args = parse_args()
+    extra_xgb = json.loads(args.xgb_params)
 
     # 1) Load & validate SEP
     sep = pd.read_parquet(args.sep_master)
@@ -139,7 +143,6 @@ def main():
 
         # 7) Train & predict
         if args.backend == "xgb":
-            # build native XGB models with correct GPU flags
             gpu = (args.device == "gpu")
             tree_method = "hist"
             device      = "cuda" if gpu else "cpu"
@@ -149,18 +152,18 @@ def main():
                 tree_method=tree_method,
                 device=device,
                 predictor=predictor,
-                # gpu_id=0 if gpu else None,
                 use_label_encoder=False,
                 objective="binary:logistic",
                 verbosity=0,
+                **extra_xgb
             )
             reg = XGBRegressor(
                 tree_method=tree_method,
                 device=device,
                 predictor=predictor,
-                # gpu_id=0 if gpu else None,
                 objective="reg:squarederror",
                 verbosity=0,
+                **extra_xgb
             )
 
             clf.fit(X_tr, y_tr_dir)
@@ -172,7 +175,6 @@ def main():
             y_pred_ret = reg.get_booster().predict(dtest)
 
         else:
-            # fallback to your existing wrappers
             clf = train_baseline_classification(
                 X_tr, y_tr_dir,
                 backend=args.backend, device=args.device,
@@ -182,10 +184,6 @@ def main():
                 X_tr, y_tr_ret,
                 backend=args.backend, device=args.device
             )
-            if args.backend=="xgb" and args.device=="gpu":
-                # just in case — but sklearn wrapper will already honor `device='cuda'`
-                for b in (clf.get_booster(), reg.get_booster()):
-                    b.set_param({"tree_method":"hist", "device":"cuda"})
             p_up       = clf.predict_proba(X_te)[:,1]
             y_pred_ret = reg.predict(X_te)
 
@@ -199,6 +197,11 @@ def main():
         cum_r  = strat_ret.sum()
         sharpe = (strat_ret.mean() / strat_ret.std() * np.sqrt(252/vw)
                   if strat_ret.std() > 0 else np.nan)
+        # — proper Calmar ratio —
+        equity = np.cumsum(strat_ret)        # running P&L
+        peak   = np.maximum.accumulate(equity)
+        drawdown = (peak - equity).max()     # worst peak→valley
+        calmar = (cum_r / drawdown) if drawdown > 0 else np.nan
 
         fold_stats.append({
             "fold":        fold,
@@ -209,10 +212,11 @@ def main():
             "dir_acc":     acc,
             "ret_rmse":    rmse,
             "cum_return":  cum_r,
-            "sharpe":      sharpe
+            "sharpe":      sharpe,
+            "calmar":      calmar,
         })
         logger.info(f"[Fold {fold}] Acc={acc:.2%}, RMSE={rmse:.4f}, "
-                    f"CumR={cum_r:.2%}, Sharpe≈{sharpe:.2f}")
+                    f"CumR={cum_r:.2%}, Sharpe≈{sharpe:.2f}, Calmar≈{calmar:.2f}")
 
     # 10) Save results
     df_folds = pd.DataFrame(fold_stats)
@@ -228,6 +232,8 @@ def main():
         ("std_cum_return",  df_folds["cum_return"].std()),
         ("mean_sharpe",     df_folds["sharpe"].mean()),
         ("std_sharpe",      df_folds["sharpe"].std()),
+        ("mean_calmar",     df_folds["calmar"].mean()),
+        ("std_calmar",      df_folds["calmar"].std()),
     ], columns=["metric","value"])
     df_summary.to_csv(args.out_summary, index=False)
     logger.info(f"Saved summary → {args.out_summary}")
