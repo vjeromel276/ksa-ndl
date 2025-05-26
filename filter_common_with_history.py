@@ -6,7 +6,7 @@ import argparse
 import logging
 import os
 from datetime import datetime
-
+from core.schema import validate_full_sep, validate_min_sep
 import pandas as pd
 
 # Paths / defaults
@@ -109,8 +109,17 @@ def main():
 
     # 4) history window
     sep = filter_history_window(sep, args.history_window)
-
-    # 5) save
+    # # 5) validate against the minimal SEP schema
+    # try:
+    #     validate_full_sep(sep)
+    #     logging.info(
+    #         "✔ Minimal SEP schema validation passed (%d rows, %d tickers)",
+    #         len(sep), sep["ticker"].nunique()
+    #     )
+    # except Exception as e:
+    #     logging.error("✘ Minimal SEP schema validation failed: %s", e)
+    #     raise  
+    # 6) save
     sep.to_parquet(out_path)
     logging.info(f"🎯 Saved filtered SEP: {out_path} "
                  f"({len(sep):,} rows; {sep['ticker'].nunique():,} tickers)")
