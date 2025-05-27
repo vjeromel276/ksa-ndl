@@ -1,5 +1,5 @@
 from .momentum import build as momentum
-from .volatitlity import build as volatility
+from .volatility import build as volatility
 # from .cross_asset import build as cross_asset
 from .liquidity import build as liquidity
 # from .earnings import build as earnings

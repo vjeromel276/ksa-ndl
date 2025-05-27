@@ -44,6 +44,7 @@ def main():
 
     # Define dynamic paths
     sep_input_path = f'sep_dataset/SHARADAR_SEP_filtered_{date}.parquet'
+    # sep_input_path = f'sep_dataset/features_{date}.parquet'
     sep_output_path = f'sep_dataset/SHARADAR_SEP_fully_filtered_{date}.parquet'
     summary_csv_path = f'ticker_coverage_summary_filtered_{date}.csv'
 
