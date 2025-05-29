@@ -21,7 +21,7 @@ def main():
     args = parser.parse_args()
 
     date = args.date
-    sep_path = args.sep_master or f"sep_dataset/SHARADAR_SEP_fully_filtered_{date}.parquet"
+    sep_path = args.sep_master or f"sep_dataset/SHARADAR_SEP_clean_{date}.parquet"
 
     logger.info(f"Loading SEP data from {sep_path}")
     sep = pd.read_parquet(sep_path)

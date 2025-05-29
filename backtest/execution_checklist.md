@@ -24,7 +24,7 @@ python predict_history.py \
 
 # 6) backtest those signals (and even sweep multiple thresholds)
 python backtest.py \
-  --predictions predictions/all_preds_2025-05-23.csv \
-  --actuals sep_dataset/SHARADAR_SEP_fully_filtered_2025-05-23.parquet \
+  --predictions predictions/all_preds_2025-05-28.csv \
+  --actuals sep_dataset/SHARADAR_SEP_clean_universe_2025-05-23.parquet \
   --horizon 5 \
   --output backtest/full_backtest_2025-05-23.csv

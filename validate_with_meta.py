@@ -13,13 +13,13 @@ import numpy as np
 def main():
     # 1) Load SEP calendar (fully filtered) and Features (per-ticker)
     sep = pd.read_parquet(
-        "sep_dataset/SHARADAR_SEP_fully_filtered_2025-05-23.parquet",
+        "sep_dataset/SHARADAR_SEP_fully_filtered_2025-05-27.parquet",
         columns=["ticker", "date"]
     )
     sep["date"] = pd.to_datetime(sep["date"])
 
     features = pd.read_parquet(
-        "sep_dataset/features_per_ticker_2025-05-23.parquet"
+        "sep_dataset/features_per_ticker_2025-05-27.parquet"
     )
     features["date"] = pd.to_datetime(features["date"])
 
