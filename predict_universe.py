@@ -1,76 +1,107 @@
 #!/usr/bin/env python3
-import argparse
-import joblib
-import logging
-import pandas as pd
-import numpy as np
-import cupy as cp
-from xgboost import DMatrix
-from core.schema import validate_full_sep
-from models.data import load_features, _coerce_sep_dtypes
+"""
+predict_universe.py
 
-# Configure logger
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s:%(message)s')
+Score a universe of tickers at a given date/horizon using your
+precomputed features and trained XGBoost models.
+"""
+import argparse
+import logging
+
+import joblib
+import pandas as pd
+import xgboost as xgb
+
+from models.data import _coerce_sep_dtypes
+
+# — Logging setup —
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 logger = logging.getLogger(__name__)
 
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="Predict cross-sectional signals on a SEP universe snapshot"
+    )
+    p.add_argument("--sep-master",      required=True, help="Filtered SEP Parquet")
+    p.add_argument("--ticker-universe", required=True, help="CSV of tickers to keep")
+    p.add_argument("--features",        required=True, help="Precomputed features Parquet")
+    p.add_argument("--date",            required=True, help="As-of date (YYYY-MM-DD)")
+    p.add_argument("--horizon",         choices=["1d","5d","10d","30d"], default="5d")
+    p.add_argument("--threshold",       type=float, default=0.6, help="Prob threshold")
+    p.add_argument("--output",          default=None, help="Output Parquet path")
+    return p.parse_args()
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Predict batch universe for a given date.")
-    parser.add_argument("--date", required=True, help="As-of date for prediction (YYYY-MM-DD)")
-    parser.add_argument("--sep-master", required=False, help="SEP master file path")
-    parser.add_argument("--threshold", type=float, default=0.95, help="Probability threshold for signal")
-    args = parser.parse_args()
+    opts = parse_args()
 
-    date = args.date
-    sep_path = args.sep_master or f"sep_dataset/SHARADAR_SEP_clean_{date}.parquet"
+    # parse as-of date
+    asof = pd.to_datetime(opts.date)
 
-    logger.info(f"Loading SEP data from {sep_path}")
-    sep = pd.read_parquet(sep_path)
+    # 1) load SEP and restrict to universe
+    logger.info("Loading SEP from %s", opts.sep_master)
+    sep = pd.read_parquet(opts.sep_master)
     sep = _coerce_sep_dtypes(sep)
-    validate_full_sep(sep)
 
-    # Feature Engineering
-    logger.info("Generating feature matrix")
-    X = load_features(sep).astype(np.float32)
+    keep = pd.read_csv(opts.ticker_universe, usecols=["ticker"])["ticker"]
+    before = sep.shape[0]
+    sep = sep[sep["ticker"].isin(keep)]
+    logger.info("Filtered SEP: %d → %d rows", before, sep.shape[0])
 
-    # Filter by date
-    as_of = pd.to_datetime(date)
-    X_date = X.xs(as_of, level="date", drop_level=False)
-    logger.info(f"Features for prediction date {date}: {X_date.shape[0]} tickers")
+    # 2) load features
+    logger.info("Loading features from %s", opts.features)
+    feats = pd.read_parquet(opts.features)
+    feats = feats.drop_duplicates(subset=["ticker","date"])
+    feats["date"] = pd.to_datetime(feats["date"])
+    feats.set_index(["ticker","date"], inplace=True)
 
-    if X_date.empty:
-        logger.error(f"No data for prediction date {date}")
-        return
+    # 3) slice to as-of date
+    X_date = feats.xs(asof, level="date", drop_level=False)
+    logger.info("Features for %s: %d tickers × %d cols",
+                opts.date, *X_date.shape)
 
-    # Prepare GPU data
-    gpu_array = cp.asarray(X_date.values)
-    dmat = DMatrix(gpu_array, feature_names=X_date.columns.tolist())
-
-    # Load models
-    clf_path = f"models/dir_5d_clf_{date}.joblib"
-    reg_path = f"models/return_5d_reg_{date}.joblib"
-    logger.info(f"Loading classifier from {clf_path}")
+    # 4) load models
+    clf_path = f"models/dir_{opts.horizon}_clf_{opts.date}.joblib"
+    reg_path = f"models/return_{opts.horizon}_reg_{opts.date}.joblib"
+    logger.info("Loading classifier %s", clf_path)
     clf = joblib.load(clf_path)
-    logger.info(f"Loading regressor from {reg_path}")
+    logger.info("Loading regressor %s", reg_path)
     reg = joblib.load(reg_path)
 
-    # Predict
-    logger.info("Running batch predictions...")
+    # 5) align feature names
+    expected = clf.get_booster().feature_names
+    missing  = set(expected) - set(X_date.columns)
+    if missing:
+        logger.error("Missing features: %s", sorted(missing))
+        raise RuntimeError("Feature mismatch")
+    X_date = X_date.loc[:, expected]
+
+    # 6) classification & regression
+    dmat  = xgb.DMatrix(X_date.values, feature_names=expected)
     probs = clf.get_booster().predict(dmat)
-    rets = reg.get_booster().predict(dmat)
 
-    # Results DataFrame
-    predictions = pd.DataFrame({
-        'ticker': X_date.index.get_level_values('ticker'),
-        'date': date,
-        'p_up': probs,
-        'pred_return': rets,
-        'signal': np.where(probs >= args.threshold, 'up', np.where(1 - probs >= args.threshold, 'down', 'no_signal'))
+    # <-- THE FIX: do not feed a DMatrix into reg.predict() -->
+    rets  = reg.predict(X_date.values)
+
+    # 7) assemble results
+    out = pd.DataFrame({
+        "ticker":                   X_date.index.get_level_values("ticker"),
+        "prob_long":                probs,
+        f"pred_{opts.horizon}_return": rets
     })
+    out["signal_long"] = (out["prob_long"] >= opts.threshold).astype(int)
 
-    # Save results
-    output_path = f"predictions/predictions_{date}.csv"
-    predictions.to_csv(output_path, index=False)
-    logger.info(f"Predictions saved to {output_path}")
+    # 8) write
+    out_fn = opts.output or f"predictions_universe_{opts.date}.parquet"
+    logger.info("Writing %d rows to %s", len(out), out_fn)
+    out.to_parquet(out_fn, index=False)
+
+    logger.info("Done.")
 
 if __name__ == "__main__":
     main()
