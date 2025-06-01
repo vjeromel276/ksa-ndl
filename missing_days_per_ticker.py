@@ -7,7 +7,7 @@ from datetime import date
 # ———————————————
 # CONFIG
 # ———————————————
-SEP_PATH   = "sep_dataset/SHARADAR_SEP_filtered_2025-05-29.parquet"
+SEP_PATH   = "sep_dataset/SHARADAR_SEP_2.parquet"
 OUT_CSV    = f"missing_days_per_ticker_{date.today().isoformat()}.csv"
 
 # ———————————————

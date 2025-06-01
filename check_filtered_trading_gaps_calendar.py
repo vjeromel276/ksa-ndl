@@ -9,7 +9,7 @@ from datetime import date
 # CONFIG
 # ———————————————
 DATA_START = date(1997, 12, 31)
-SEP_PATH   = "sep_dataset/SHARADAR_SEP_filtered_2025-05-29.parquet"
+SEP_PATH   = "sep_dataset/SHARADAR_SEP_filtered_2025-05-30.parquet"
 
 # ———————————————
 # LOGGING
