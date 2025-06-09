@@ -74,7 +74,7 @@ def main():
 
     # 2) Download SEP CSV
     API_BASE = "https://data.nasdaq.com/api/v3/datatables/SHARADAR"
-    API_KEY  = "sMukN5Vun_5JyM7HzHr6"
+    API_KEY  = "qux3577g2au_ELYoZfCy"
     url = f"{API_BASE}/SEP.csv?date={date_str}&api_key={API_KEY}"
     dest_csv = os.path.join(args.data_dir, f"SHARADAR_SEP_{date_str}.csv")
     download_file(url, dest_csv)
